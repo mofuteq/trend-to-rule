@@ -1,0 +1,35 @@
+{% macro user(article_text) %}
+Given the article text, infer (1) the fashion vertical and (2) the language of the article.
+
+# Goal:
+Choose the most specific vertical you can justify from the text.
+
+# Vertical labels:
+- "mens": primarily about menswear or advice for men.
+- "womens": primarily about womenswear or advice for women.
+- "unisex": explicitly about both, or clearly gender-neutral coverage (industry, brands, culture) with no dominant gender focus.
+- "unknown": only if there is truly not enough signal in the text.
+
+# Decision procedure (important):
+1) First, look for strong explicit signals.
+   - mens signals: "menswear", "men's", "for men", "male", "grooming", suits/tailoring advice aimed at men.
+   - womens signals: "womenswear", "women's", "for women", "female", dresses/skirts styling advice aimed at women.
+   If one side has clear explicit focus, choose it.
+
+2) If explicit signals are absent, look for dominant implicit framing.
+   - If the article repeatedly addresses a specific audience (e.g., "men should...", "women should...") or consistently uses gendered examples/models, choose that vertical.
+
+3) Use "unisex" ONLY when:
+   - the article explicitly discusses both mens and womens fashion, OR
+   - it is clearly about general fashion/industry/culture (e.g., luxury strategy, streetwear culture, sustainability, brand business) AND there is no dominant gender framing.
+
+4) Do NOT default to "unisex" just because the topic *could* apply to everyone.
+   If the article feels like it targets one side more than the other, pick "mens" or "womens".
+
+# Language:
+Return the primary language of the provided text as a short code (e.g., "en", "ja"). If uncertain, return "unknown".
+Do not guess from the publisher name alone; use the content.
+
+# Article text:
+{{article_text}}
+{% endmacro %}
