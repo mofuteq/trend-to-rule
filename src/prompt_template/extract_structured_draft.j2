@@ -51,15 +51,13 @@ Given the user's prompt and the retrieved context, produce a first-pass answer t
 - Use gaps to record missing everyday examples, missing subgroup coverage, or missing regional/workplace differentiation.
 - Ensure canonical is pre-shift baseline only; ensure emerging is post-shift signals only.
 - If evidence items have IDs (e.g., [C01], [E03]), append them at the end of each claim like "... [C01]".
+- Answer in English.
 {% endmacro %}
 
-{% macro user(user_prompt, canonical_context, emerging_context) %}
-# User Prompt
-{{user_prompt}}
+{% macro user(canonical_claims, emerging_claims) %}
+# Canonical claims:
+{{canonical_claims}}
 
-# Canonical Context:
-{{canonical_context}}
-
-# Emerging Context:
-{{emerging_context}}
+# Emerging claims:
+{{emerging_claims}}
 {% endmacro %}

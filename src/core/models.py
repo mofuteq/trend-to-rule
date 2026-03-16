@@ -24,6 +24,17 @@ class ArticleAttribute(BaseModel):
     language: str
 
 
+class Claim(BaseModel):
+    claim: str
+    claim_type: Literal["observation", "interpretation", "norm", "signal"]
+    source_id: str
+
+
+class StructuredClaims(BaseModel):
+    canonical_claims: list[Claim]
+    emerging_claims: list[Claim]
+
+
 class StructuredDraft(BaseModel):
     theme: str
     canonical: list[str]

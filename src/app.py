@@ -25,6 +25,7 @@ from ui.app_state import (
 from services.chat import (
     analyze_user_needs,
     extract_structured_draft,
+    extract_claims,
     generate_decision_support
 )
 from storage.chat_db import ChatDB
@@ -60,7 +61,8 @@ VECTOR_DEVICE = os.getenv("VECTOR_DEVICE", "auto")
 VECTOR_CANDIDATE_K = int(os.getenv("VECTOR_CANDIDATE_K", "50"))
 _vector_qdrant_path_raw = os.getenv("VECTOR_QDRANT_PATH", "").strip()
 VECTOR_QDRANT_PATH = (
-    resolve_project_path(_vector_qdrant_path_raw) if _vector_qdrant_path_raw else None
+    resolve_project_path(
+        _vector_qdrant_path_raw) if _vector_qdrant_path_raw else None
 )
 VECTOR_QDRANT_URL = os.getenv("VECTOR_QDRANT_URL", "http://localhost:6333")
 VECTOR_PER_QUERY_TOP_K = int(os.getenv("VECTOR_PER_QUERY_TOP_K", "5"))
@@ -130,7 +132,7 @@ def process_user_prompt(
     )
     with st.chat_message("user"):
         st.markdown(normalized_prompt)
-    with st.status("Analyzing intent..."):
+    with st.status("Analyzing..."):
         user_needs = analyze_user_needs(
             user_prompt=normalized_prompt,
             last_user_goal=st.session_state.last_user_goal,
@@ -167,10 +169,17 @@ def process_user_prompt(
 
     with st.chat_message("assistant"):
         placeholder = st.empty()
-        structured_draft = extract_structured_draft(
-            user_prompt=user_prompt,
+        structured_claims = extract_claims(
             canonical_context=canonical_context,
             emerging_context=emerging_context,
+            user_goal=user_needs.user_goal,
+            last_user_goal=st.session_state.last_user_goal,
+            history=st.session_state.history
+        )
+        st.write(structured_claims)
+        structured_draft = extract_structured_draft(
+            canonical_claims=structured_claims.canonical_claims,
+            emerging_claims=structured_claims.emerging_claims,
             user_goal=user_needs.user_goal,
             last_user_goal=st.session_state.last_user_goal,
             history=st.session_state.history,

@@ -6,11 +6,13 @@ Structural trend distillation engine that separates canonical patterns from emer
 
 ## Overview
 
-trend-to-rule is a structural reasoning system that converts noisy trend narratives into reusable decision rules.
+trend-to-rule is a structural reasoning system that converts noisy multi-source trend narratives into reusable decision rules.
+
+Instead of summarizing retrieved documents, the system separates canonical patterns from emerging signals and synthesizes higher‑level rules that explain how trends evolve.
 
 It ingests multi-source articles, performs structured retrieval, separates stable (canonical) patterns from emerging signals, and outputs reusable design rules in a deterministic JSON schema.
 
-Claim-level extraction is planned but not yet implemented; current synthesis operates at the article/chunk level.
+The system performs claim-level extraction before structural synthesis so that reasoning operates on structured signals rather than raw article chunks.
 
 This is not a knowledge retrieval tool.
 This is not a summarizer.
@@ -164,7 +166,7 @@ uv sync
 If you want to run Qdrant as a local container instead of using `--qdrant-path`, start it with the bundled Compose file:
 
 ```bash
-docker compose -f src/docker-compose.yml up -d
+docker compose up -d
 ```
 
 Qdrant will be available at:
@@ -174,7 +176,7 @@ Qdrant will be available at:
 To stop it:
 
 ```bash
-docker compose -f src/docker-compose.yml down
+docker compose down
 ```
 
 This Compose setup stores Qdrant data in the Docker volume `qdrant_data`. If you want filesystem-based local persistence inside the repo, use `--qdrant-path .data/qdrant_data` instead.
@@ -438,7 +440,7 @@ It moves beyond traditional RAG into structured reasoning augmentation.
 
 Planned improvements include:
 
-- Claim-level extraction to improve structural precision
+- Further improvements to claim-level extraction precision and robustness
 - Retrieval ranking tuned for canonical vs emerging signals
 - Expanded evaluation datasets for trend evolution tasks
 
@@ -449,6 +451,8 @@ These additions aim to further strengthen the separation between stable structur
 ## Model Handling
 
 `create()` in `src/services/chat.py` switches backend based on the `model` string.
+
+The architecture is intentionally model-agnostic. Lightweight models can be used for most stages of the pipeline to keep latency low, while stronger reasoning models can be swapped into structural synthesis stages if deeper reasoning is required.
 
 - If `model` contains `gemini`: use the Gemini SDK.
 - Otherwise: use an OpenAI-compatible SDK endpoint (for example, an Ollama-compatible endpoint).

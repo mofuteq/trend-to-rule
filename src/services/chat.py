@@ -12,7 +12,8 @@ from google.genai.types import (
     Content,
     GenerateContentResponse,
     Part,
-    GenerateContentConfig
+    GenerateContentConfig,
+    ThinkingConfig,
 )
 from openai import OpenAI
 from tenacity import (
@@ -26,7 +27,9 @@ from core.models import (
     UserGoal,
     ArticleAttribute,
     StructuredDraft,
-    SearchQuery
+    SearchQuery,
+    StructuredClaims,
+    Claim
 )
 from core.template_utils import get_j2_template
 from core.text_utils import normalize_text_nfkc
@@ -59,8 +62,13 @@ DEFAULT_OPENAI_BASE_URL = os.getenv(
     "OPENAI_BASE_URL", "http://localhost:11434/v1")
 DEFAULT_OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gemma3:12b")
 DEFAULT_OPENAI_REASONING_EFFORT = os.getenv(
-    "OPENAI_REASONING_EFFORT", "medium")
+    "OPENAI_REASONING_EFFORT", "low")
 REASONING_EFFORT_UNSUPPORTED_MODELS: set[str] = set()
+GEMINI_THINKING_BUDGET_BY_REASONING_EFFORT: dict[str, int] = {
+    "low": 128,
+    "medium": 512,
+    "high": 1024,
+}
 
 # Template
 TEMPLATE_SEARCH_PATH = SRC_ROOT / "prompt_template"
@@ -71,6 +79,10 @@ TEMPLATE_USER_NEEDS = get_j2_template(
 TEMPLATE_INFER_ARTICLE = get_j2_template(
     searchpath=TEMPLATE_SEARCH_PATH,
     name="infer_attribute.j2"
+)
+TEMPLATE_STRUCTURED_CLIAMS = get_j2_template(
+    searchpath=TEMPLATE_SEARCH_PATH,
+    name="extract_claims.j2"
 )
 TEMPLATE_STRUCTURED_DRAFT = get_j2_template(
     searchpath=TEMPLATE_SEARCH_PATH,
@@ -148,6 +160,7 @@ def create(
             temperature=temperature,
             top_p=top_p,
             seed=seed,
+            reasoning_effort=reasoning_effort,
             response_model=response_model,
             history=history,
             model=model,
@@ -176,6 +189,7 @@ def _create_with_gemini(
     temperature: float,
     top_p: float,
     seed: int,
+    reasoning_effort: Literal["low", "medium", "high"],
     response_model: type[ModelT] | None,
     history: list[Content] | None,
     model: str,
@@ -183,6 +197,9 @@ def _create_with_gemini(
 ) -> ModelT | GenerateContentResponse:
     """Create response using Gemini SDK backend."""
     client = genai.Client(api_key=api_key)
+    thinking_config = ThinkingConfig(
+        thinking_budget=GEMINI_THINKING_BUDGET_BY_REASONING_EFFORT[reasoning_effort]
+    )
     contents = [
         Content(
             role="user",
@@ -196,14 +213,16 @@ def _create_with_gemini(
             response_json_schema=response_model.model_json_schema(),
             temperature=temperature,
             top_p=top_p,
-            seed=seed
+            seed=seed,
+            thinking_config=thinking_config,
         )
     else:
         config = GenerateContentConfig(
             system_instruction=system_prompt if system_prompt else None,
             temperature=temperature,
             top_p=top_p,
-            seed=seed
+            seed=seed,
+            thinking_config=thinking_config,
         )
 
     model_candidates: list[str] = []
@@ -490,8 +509,9 @@ def generate_search_query(
             last_user_goal=last_user_goal,
             now=datetime.now()
         ),
-        model="gemma3:12b",
-        response_model=SearchQuery
+        model="gemini-2.5-flash",
+        response_model=SearchQuery,
+        reasoning_effort="low"
     )
     return search_query
 
@@ -523,7 +543,8 @@ def analyze_user_needs(
         ),
         response_model=UserGoal,
         api_key=api_key,
-        model="gemma3:12b"
+        model="gemini-2.5-flash",
+        reasoning_effort="medium"
     )
     search_query = generate_search_query(
         user_prompt=user_prompt,
@@ -569,10 +590,48 @@ def infer_article_attribute(
     return res
 
 
-def extract_structured_draft(
-    user_prompt: str,
+def extract_claims(
     canonical_context: str,
     emerging_context: str,
+    user_goal: str,
+    last_user_goal: str | None = None,
+    history: list[Content] | None = None,
+) -> StructuredClaims:
+    """Extract structured claims from canonical and emerging contexts.
+
+    Args:
+        canonical_context (str): Retrieved canonical context text.
+        emerging_context (str): Retrieved emerging context text.
+        user_goal (str): Current inferred user goal.
+        last_user_goal (str | None): Previous inferred user goal for continuity.
+        history (list[Content] | None): Prior chat history.
+
+    Returns:
+        StructuredClaims: Structured claims generated from the provided contexts.
+    """
+    res = create(
+        user_prompt=TEMPLATE_STRUCTURED_CLIAMS
+        .module.system(
+            user_goal=user_goal,
+            last_user_goal=last_user_goal,
+            now=datetime.now()
+        ),
+        system_prompt=TEMPLATE_STRUCTURED_CLIAMS
+        .module.user(
+            canonical_context=canonical_context,
+            emerging_context=emerging_context
+        ),
+        history=history,
+        response_model=StructuredClaims,
+        model="gemini-2.5-flash",
+        reasoning_effort="low"
+    )
+    return res
+
+
+def extract_structured_draft(
+    canonical_claims: list[Claim],
+    emerging_claims: list[Claim],
     user_goal: str,
     api_key: str | None = None,
     history: list[Content] | None = None,
@@ -581,7 +640,6 @@ def extract_structured_draft(
     """Generate structured draft from user prompt and retrieved context.
 
     Args:
-        user_prompt (str): User prompt.
         canonical_context (str): Retrieved canonical context text.
         emerging_context (str): Retrieved emerging context text.
         user_goal (str): Current inferred user goal.
@@ -595,9 +653,14 @@ def extract_structured_draft(
     res = create(
         user_prompt=TEMPLATE_STRUCTURED_DRAFT
         .module.user(
-            user_prompt=user_prompt,
-            canonical_context=canonical_context,
-            emerging_context=emerging_context
+            canonical_claims="\n".join(
+                claim.model_dump_json()
+                for claim in canonical_claims
+            ),
+            emerging_claims="\n".join(
+                claim.model_dump_json()
+                for claim in emerging_claims
+            )
         ),
         system_prompt=TEMPLATE_STRUCTURED_DRAFT
         .module.system(
@@ -608,7 +671,8 @@ def extract_structured_draft(
         history=history,
         api_key=api_key,
         model="gemini-2.5-flash",
-        response_model=StructuredDraft
+        response_model=StructuredDraft,
+        reasoning_effort="medium"
     )
     return res
 

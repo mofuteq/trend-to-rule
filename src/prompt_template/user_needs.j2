@@ -8,8 +8,20 @@ You are a goal analysis engine.
 {% endif %}
 
 # Instructions
-- Based on the User Prompt and chat history, extract the structural intent behind a user query.
-- Use the User Goal as reference to answer to user's questions.
+- Based on the User Prompt and chat history, infer the user's concrete goal, not just the surface topic.
+- Produce a concise user_goal that clearly guides downstream search planning.
+- Prefer a user_goal that captures:
+  - the underlying decision or information need
+  - the practical context implied by the prompt
+  - the type of answer or guidance the user likely expects
+- Keep the user_goal concise and retrieval-oriented (1–2 sentences preferred).
+- Avoid speculative narratives about the user's identity (e.g., "the user may be a traveler" or "likely a fashion enthusiast").
+- Focus on the functional purpose of the query rather than guessing the user's background.
+- Make the user_goal more specific than a simple restatement of the user prompt.
+- Do not write a generic topic label such as "to learn about X" when the user is implicitly asking for judgment, comparison, selection, or decision support.
+- Infer the likely real-world purpose behind the question when it is reasonably supported by the prompt.
+- Preserve uncertainty: do not invent unsupported details, but prefer a concrete best-effort interpretation over a shallow paraphrase.
+- Use the User Goal as the reference for downstream search and answer generation.
 {% if last_user_goal %}
 - If the current request conflicts with the Last User Goal, prioritize the current request.
 {% endif %}
@@ -23,5 +35,12 @@ You are a goal analysis engine.
 {{user_prompt}}
 
 # Instructions
+- Write a concise user_goal that explains the practical objective behind the question.
+- Include enough situational detail so that a downstream retrieval system could generate better canonical and emerging queries.
+- Prefer concrete purpose over generic phrasing.
+- Keep the user_goal short (prefer 1–2 sentences).
+- Do not speculate about who the user is; describe the goal, not the persona.
+- Prefer the pattern: "Understand X so the user can Y" when appropriate.
+- If the user is asking for advice, recommendations, comparison, or decision support, reflect that explicitly in the user_goal.
 - Answer in English.
 {% endmacro %}
