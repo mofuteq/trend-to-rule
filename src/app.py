@@ -35,9 +35,8 @@ from core.text_utils import normalize_text_nfkc
 SRC_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = SRC_ROOT.parent
 ENV_PATH = SRC_ROOT / ".env"
-if not ENV_PATH.is_file():
-    raise FileNotFoundError(f"Please confirm .env Path: {ENV_PATH}")
-load_dotenv(ENV_PATH)
+if ENV_PATH.is_file():
+    load_dotenv(ENV_PATH)
 
 
 def resolve_project_path(raw_path: str) -> Path:

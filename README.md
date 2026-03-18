@@ -161,16 +161,55 @@ Install dependencies with:
 uv sync
 ```
 
+## `.env` Configuration
+
+Create `src/.env` for local runs and Docker Compose `env_file`.
+
+Typical example:
+
+```dotenv
+GEMINI_API_KEY=your-gemini-api-key
+OPENAI_API_KEY=your-openai-compatible-api-key
+OPENAI_BASE_URL=http://localhost:11434/v1
+OPENAI_MODEL=gemma3:12b
+OPENAI_REASONING_EFFORT=low
+
+VECTOR_QDRANT_URL=http://localhost:6333
+VECTOR_QDRANT_PATH=
+VECTOR_COLLECTION=article_markdown_bge_m3
+VECTOR_MODEL_NAME=BAAI/bge-m3
+VECTOR_DEVICE=auto
+VECTOR_CANDIDATE_K=50
+VECTOR_PER_QUERY_TOP_K=5
+VECTOR_MMR_DIVERSITY=0.3
+
+CHAT_DB_PATH=.data/chat_db
+APP_LOG_LEVEL=INFO
+```
+
+Notes:
+
+- `GEMINI_API_KEY`: Used when `services/chat.py` routes requests to Gemini.
+- `OPENAI_API_KEY`: Used for OpenAI-compatible endpoints. For some local backends, a dummy value is acceptable.
+- `OPENAI_BASE_URL`: Default OpenAI-compatible endpoint. Example: Ollama at `http://localhost:11434/v1`.
+- `OPENAI_MODEL`: Default non-Gemini model name.
+- `OPENAI_REASONING_EFFORT`: Default reasoning level for non-Gemini models. Supported values are `low`, `medium`, and `high`.
+- `VECTOR_QDRANT_URL`: Qdrant endpoint used by the Streamlit app when `VECTOR_QDRANT_PATH` is empty.
+- `VECTOR_QDRANT_PATH`: Optional filesystem path for local embedded Qdrant. Leave empty to use `VECTOR_QDRANT_URL`.
+- `CHAT_DB_PATH`: LMDB path for chat history and session metadata.
+- `APP_LOG_LEVEL`: Application log level such as `INFO` or `DEBUG`.
+
 ## Run Qdrant With Docker Compose
 
-If you want to run Qdrant as a local container instead of using `--qdrant-path`, start it with the bundled Compose file:
+If you want to run the Streamlit app and Qdrant in containers, start them with the bundled Compose file:
 
 ```bash
 docker compose up -d
 ```
 
-Qdrant will be available at:
+Services will be available at:
 
+- Streamlit app: `http://localhost:8501`
 - `http://localhost:6333`
 
 To stop it:
@@ -179,7 +218,15 @@ To stop it:
 docker compose down
 ```
 
-This Compose setup stores Qdrant data in the Docker volume `qdrant_data`. If you want filesystem-based local persistence inside the repo, use `--qdrant-path .data/qdrant_data` instead.
+Compose details:
+
+- The app image is built from [`src/Dockerfile`](/Users/vega/Library/CloudStorage/Box-Box/Source/trend-to-rule/src/Dockerfile) using `debian:stable-slim`.
+- The app is started with `uv run streamlit run src/app.py`.
+- The app connects to Qdrant over the Compose network using `http://qdrant:6333`.
+- Local runtime data is mounted from `.data/` into the container at `/app/.data`.
+- Environment variables are loaded from `src/.env` via `env_file`.
+
+Qdrant storage remains persisted in the Docker volume `qdrant_data`.
 
 ---
 
