@@ -9,6 +9,7 @@ from storage.chat_db import ChatDB
 
 def init_session_state() -> None:
     """Initialize streamlit session state keys."""
+    st.session_state.setdefault("user_id", "")
     st.session_state.setdefault("messages", [])
     st.session_state.setdefault("history", [])
     st.session_state.setdefault("last_user_goal", "")

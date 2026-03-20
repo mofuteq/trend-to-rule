@@ -67,6 +67,7 @@ VECTOR_QDRANT_URL = os.getenv("VECTOR_QDRANT_URL", "http://localhost:6333")
 VECTOR_PER_QUERY_TOP_K = int(os.getenv("VECTOR_PER_QUERY_TOP_K", "5"))
 VECTOR_MMR_DIVERSITY = float(os.getenv("VECTOR_MMR_DIVERSITY", "0.3"))
 APP_LOG_LEVEL = os.getenv("APP_LOG_LEVEL", "INFO").upper()
+ANONYMOUS_USER_QUERY_KEY = "uid"
 
 
 def get_chat_db() -> ChatDB:
@@ -77,6 +78,24 @@ def get_chat_db() -> ChatDB:
             db_names=[CHAT_DB_NAME, USER_DB_NAME, CHAT_META_DB_NAME],
         )
     return st.session_state.chat_db
+
+
+def get_or_create_anonymous_user_id() -> str:
+    """Get persistent anonymous user id from query params or create one."""
+    current_user_id = str(st.session_state.get("user_id") or "").strip()
+    if current_user_id:
+        return current_user_id
+
+    query_user_id = st.query_params.get(ANONYMOUS_USER_QUERY_KEY, "")
+    if isinstance(query_user_id, list):
+        query_user_id = query_user_id[0] if query_user_id else ""
+    query_user_id = str(query_user_id or "").strip()
+    if not query_user_id:
+        query_user_id = f"anon-{uuid.uuid4()}"
+        st.query_params[ANONYMOUS_USER_QUERY_KEY] = query_user_id
+
+    st.session_state.user_id = query_user_id
+    return query_user_id
 
 
 def normalize_chat_id_list(raw_ids: list[object]) -> list[str]:
@@ -236,7 +255,7 @@ def render_chat_input(chat_db: ChatDB, user_chat_ids: list[str], user_id: str) -
         )
 
 
-def main(user_id: str) -> None:
+def main() -> None:
     """Run streamlit app."""
     logging.basicConfig(
         level=getattr(logging, APP_LOG_LEVEL, logging.INFO),
@@ -247,6 +266,7 @@ def main(user_id: str) -> None:
     st.title("🧩trend-to-rule")
 
     init_session_state()
+    user_id = get_or_create_anonymous_user_id()
     if not st.session_state.chat_id:
         st.session_state.chat_id = str(uuid.uuid4())
 
@@ -288,8 +308,4 @@ def main(user_id: str) -> None:
 
 
 if __name__ == "__main__":
-    try:
-        current_user = os.getlogin()
-    except OSError:
-        current_user = os.getenv("USER", "unknown")
-    main(user_id=current_user)
+    main()
