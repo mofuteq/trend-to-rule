@@ -15,7 +15,7 @@ class UserGoal(BaseModel):
 
 class UserNeeds(BaseModel):
     user_goal: str
-    canditate_queries: SearchQuery
+    candidate_queries: SearchQuery
     reason: str
 
 

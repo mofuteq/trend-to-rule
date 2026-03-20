@@ -553,7 +553,7 @@ def analyze_user_needs(
     )
     return UserNeeds(
         user_goal=user_goal.user_goal,
-        canditate_queries=search_query,
+        candidate_queries=search_query,
         reason=user_goal.reason
     )
 

@@ -143,7 +143,7 @@ def process_user_prompt(
     canonical_rows: list[dict[str, str]] = []
     emerging_rows: list[dict[str, str]] = []
     try:
-        candidate_queries = user_needs.canditate_queries
+        candidate_queries = user_needs.candidate_queries
         retrieved = retrieve_vector_results_by_queries(
             canonical_query=str(candidate_queries.canonical_query or ""),
             emerging_query=str(candidate_queries.emerging_query or ""),

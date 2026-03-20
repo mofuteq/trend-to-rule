@@ -14,6 +14,10 @@ It ingests multi-source articles, performs structured retrieval, separates stabl
 
 The system performs claim-level extraction before structural synthesis so that reasoning operates on structured signals rather than raw article chunks.
 
+trend-to-rule is not an LLM-centric agent.
+Rather than delegating end-to-end decision-making to the model, it enforces an explicit reasoning pipeline in which LLMs operate as controlled transformation components inside a human-designed system.
+The final decision remains with the user.
+
 This is not a knowledge retrieval tool.
 This is not a summarizer.
 
@@ -26,6 +30,10 @@ The goal is structural distillation: transforming noisy trend narratives into re
 The core idea is that retrieval itself becomes a reasoning primitive.
 
 The goal is to model how humans derive rules from observed trends.
+
+Sample output:
+
+- [examples/sample-output.md](./examples/sample-output.md)
 
 ---
 
@@ -220,7 +228,7 @@ docker compose down
 
 Compose details:
 
-- The app image is built from [`src/Dockerfile`](/Users/vega/Library/CloudStorage/Box-Box/Source/trend-to-rule/src/Dockerfile) using `debian:stable-slim`.
+- The app image is built from [`src/Dockerfile`](./src/Dockerfile) using `debian:stable-slim`.
 - The app is started with `uv run streamlit run src/app.py`.
 - The app connects to Qdrant over the Compose network using `http://qdrant:6333`.
 - Local runtime data is mounted from `.data/` into the container at `/app/.data`.
