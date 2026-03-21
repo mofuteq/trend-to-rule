@@ -23,7 +23,7 @@ This is not a summarizer.
 
 The system operates as a staged pipeline:
 ```
-collect → extract → embed → retrieval → structural synthesis → rule generation
+collect → extract → embed → retrieval → claim extraction → structural synthesis → rule generation
 ```
 The goal is structural distillation: transforming noisy trend narratives into reusable reasoning artifacts.
 
@@ -48,8 +48,9 @@ The pipeline consists of the following stages:
 3. Embedding generation
 4. Hybrid retrieval (dense + sparse)
 5. Canonical vs Emerging separation
-6. Structural synthesis
-7. Rule generation
+6. Claim extraction
+7. Structural synthesis
+8. Rule generation
 
 Each stage produces explicit intermediate artifacts so the reasoning process remains reproducible and inspectable.
 
@@ -72,7 +73,8 @@ flowchart TD
     H -->|Per-query MMR| D
     H --> I[Canonical/Emerging contexts]
 
-    I --> K[extract_structured_draft]
+    I --> J[extract_claims]
+    J -->|canonical_claims / emerging_claims| K[extract_structured_draft]
     K --> E
     E --> L[UI response + retrieval table]
 
@@ -525,7 +527,16 @@ The architecture is intentionally model-agnostic. Lightweight models can be used
 - `seed=42`
 - `reasoning_effort="medium"`
 
+
 ### Behavior For Models Without `reasoning_effort` Support
 
 If a model returns HTTP 400 because it does not support `reasoning_effort`, the request is automatically retried without `reasoning_effort`.  
 That model is then cached in-process as unsupported, so subsequent calls skip `reasoning_effort` from the first attempt.
+
+---
+
+## License
+
+This project is licensed under the MIT License.
+
+This project uses third-party libraries, each of which is subject to its own license.
