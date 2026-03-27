@@ -229,7 +229,6 @@ def build_retrieved_results_html_table(rows: list[dict[str, str]]) -> str:
     for row in rows:
         title = escape(row.get("title", ""))
         published_at = escape(row.get("published_at", ""))
-        chunk_id = escape(row.get("chunk_id", ""))
         section_title = escape(row.get("section_title", ""))
         source_url = row.get("source_url", "").strip()
         title_cell = (
@@ -238,13 +237,13 @@ def build_retrieved_results_html_table(rows: list[dict[str, str]]) -> str:
             else title
         )
         body_rows.append(
-            f"<tr><td>{title_cell}</td><td>{published_at}</td><td>{chunk_id}</td><td>{section_title}</td></tr>"
+            f"<tr><td>{title_cell}</td><td>{published_at}</td><td>{section_title}</td></tr>"
         )
 
     body_html = "".join(body_rows)
     return (
         "<table>"
-        "<thead><tr><th>title</th><th>published_at</th><th>chunk_id</th><th>section_title</th></tr></thead>"
+        "<thead><tr><th>title</th><th>published_at</th><th>section_title</th></tr></thead>"
         f"<tbody>{body_html}</tbody>"
         "</table>"
     )

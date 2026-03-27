@@ -42,3 +42,13 @@ class StructuredDraft(BaseModel):
     conflicts: list[str]
     gaps: list[str]
     common_rule: list[str]
+
+
+class ExampleQuerySpec(BaseModel):
+    context: str | None = None
+    audience: str | None = None
+    color: str | None = None
+    material: str | None = None
+    silhouette: str | None = None
+    item: str
+    vibe: str | None = None

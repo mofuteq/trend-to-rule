@@ -23,9 +23,35 @@ This is not a summarizer.
 
 The system operates as a staged pipeline:
 ```
-collect → extract → embed → retrieval → claim extraction → structural synthesis → rule generation
+collect → extract → embed → retrieval → claim extraction → structural synthesis → rule generation → visual example retrieval
 ```
 The goal is structural distillation: transforming noisy trend narratives into reusable reasoning artifacts.
+
+### Visual Example Retrieval
+
+The system can optionally attach visual references after rule generation.
+
+This step exists to make distilled rules more concrete without turning the project into a recommendation engine.
+Visual examples are treated as explicit example instantiations of a rule, not as hidden recommendations produced by the model.
+
+The pipeline does not send the final answer text directly to image search.
+Instead, it first converts the rule into a compact `ExampleQuerySpec`, then renders a search query optimized for image retrieval.
+
+This is intentional.
+
+Explanation terms are not always retrieval terms.
+Abstract phrases such as `minimalism`, `sophisticated`, or `quality` may sound appropriate in a written explanation, but they often perform poorly as image-search queries.
+For visual retrieval, the system prioritizes concrete wardrobe and context terms such as item, material, silhouette, and usage context.
+
+Example:
+
+`rule -> ExampleQuerySpec -> rendered query -> SearXNG image search -> visual reference cards`
+
+This keeps the search step:
+
+- explicit
+- replaceable
+- observable
 
 The core idea is that retrieval itself becomes a reasoning primitive.
 
@@ -39,7 +65,7 @@ Sample output:
 
 ## Architecture
 
-The following diagram shows the end-to-end pipeline from RSS ingestion to rule synthesis.
+The following diagram shows the end-to-end pipeline from RSS ingestion to rule synthesis, followed by optional visual example retrieval.
 
 The pipeline consists of the following stages:
 
@@ -51,6 +77,7 @@ The pipeline consists of the following stages:
 6. Claim extraction
 7. Structural synthesis
 8. Rule generation
+9. Visual example retrieval
 
 Each stage produces explicit intermediate artifacts so the reasoning process remains reproducible and inspectable.
 
@@ -75,12 +102,16 @@ flowchart TD
 
     I --> J[extract_claims]
     J -->|canonical_claims / emerging_claims| K[extract_structured_draft]
-    K --> E
-    E --> L[UI response + retrieval table]
+    K --> M[generate_example_query_spec]
+    M --> N[render_example_query]
+    N --> O[search_visual_examples]
+    O --> E
+    E --> L[UI response + retrieval table + visual references]
 
     subgraph LLM Layer
       F
       K
+      M
     end
 
     subgraph Storage
@@ -97,52 +128,41 @@ The codebase is organized to mirror the pipeline described above.
 ```text
 trend-to-rule/
 ├── .data/
-│   ├── rss_db/
-│   ├── article_db/
-│   ├── chat_db/
-│   └── qdrant_data/
+├── docker-compose.yml
+├── searxng/
+│   └── settings.yml
 ├── src/
 │   ├── app.py
+│   ├── Dockerfile
+│   ├── .env
 │   ├── core/
-│   │   ├── models.py
-│   │   ├── template_utils.py
-│   │   └── text_utils.py
 │   ├── pipeline/
-│   │   ├── collect_rss.py
-│   │   ├── extract_articles.py
-│   │   └── embed_articles.py
 │   ├── prompt_template/
-│   │   ├── extract_structured_draft.j2
-│   │   ├── generate_decision_support.j2
-│   │   ├── generate_search_query.j2
-│   │   ├── infer_attribute.j2
-│   │   └── user_needs.j2
 │   ├── retrieval/
-│   │   ├── app_retrieval.py
-│   │   └── search_vectors.py
 │   ├── services/
-│   │   └── chat.py
 │   ├── storage/
-│   │   ├── chat_db.py
-│   │   └── lmdb_utils.py
 │   └── ui/
-│       ├── app_sidebar.py
-│       └── app_state.py
 ├── pyproject.toml
+├── uv.lock
 └── README.md
 ```
 
 Directory responsibilities:
 
-- `.data/`: Local runtime artifacts such as LMDB files, Qdrant data, and debug outputs.
-- `src/core/`: Shared domain models and reusable text/template utilities.
-- `src/pipeline/`: Offline ingestion pipeline stages from RSS collection to embedding generation.
-- `src/prompt_template/`: Prompt templates used by LLM-driven analysis and synthesis steps.
-- `src/retrieval/`: Hybrid vector retrieval and canonical/emerging query orchestration.
-- `src/services/`: LLM integration layer responsible for model routing and request handling.
-- `src/storage/`: Persistence helpers for LMDB-backed storage.
-- `src/ui/`: Streamlit UI state and sidebar wiring.
+- `.data/`: Local runtime artifacts such as LMDB files, JSONL debug outputs, and chat state.
+- `docker-compose.yml`: Local multi-service runtime for the app, Qdrant, and SearXNG.
+- `searxng/`: Local SearXNG configuration used by Docker Compose.
+- `src/.env`: Local environment variables for app and pipeline runs.
+- `src/Dockerfile`: Container image definition for the Streamlit app.
+- `src/core/`: Shared configuration, domain models, and reusable query/text/template helpers.
+- `src/pipeline/`: Offline ingestion pipeline stages from RSS collection to extraction and embedding.
+- `src/prompt_template/`: Prompt templates used by analysis, claim extraction, synthesis, and image-query generation.
+- `src/retrieval/`: Hybrid vector retrieval, MMR reranking, app-facing retrieval formatting, and explicit visual search adapters.
+- `src/services/`: LLM client layer, prompt loading, chat-domain functions, workflow orchestration, and image search.
+- `src/storage/`: LMDB-backed persistence helpers.
+- `src/ui/`: Streamlit UI rendering, session state, and sidebar wiring.
 - `src/app.py`: Streamlit application entrypoint.
+- `uv.lock`: Locked dependency graph for reproducible `uv` environments.
 
 ---
 ## Motivation
@@ -192,6 +212,8 @@ VECTOR_DEVICE=auto
 VECTOR_CANDIDATE_K=50
 VECTOR_PER_QUERY_TOP_K=5
 VECTOR_MMR_DIVERSITY=0.3
+SEARXNG_BASE_URL=http://localhost:8080
+SEARXNG_IMAGE_LIMIT=5
 
 CHAT_DB_PATH=.data/chat_db
 APP_LOG_LEVEL=INFO
@@ -206,8 +228,16 @@ Notes:
 - `OPENAI_REASONING_EFFORT`: Default reasoning level for non-Gemini models. Supported values are `low`, `medium`, and `high`.
 - `VECTOR_QDRANT_URL`: Qdrant endpoint used by the Streamlit app when `VECTOR_QDRANT_PATH` is empty.
 - `VECTOR_QDRANT_PATH`: Optional filesystem path for local embedded Qdrant. Leave empty to use `VECTOR_QDRANT_URL`.
+- `SEARXNG_BASE_URL`: Optional SearXNG endpoint for app-side web search integration.
+- `SEARXNG_IMAGE_LIMIT`: Maximum number of deduplicated image results rendered by the app.
 - `CHAT_DB_PATH`: LMDB path for chat history and session metadata.
 - `APP_LOG_LEVEL`: Application log level such as `INFO` or `DEBUG`.
+
+SearXNG JSON response example:
+
+```bash
+curl "http://localhost:8080/search?q=silicon+valley+fashion&format=json"
+```
 
 ## Run Qdrant With Docker Compose
 
@@ -220,7 +250,8 @@ docker compose up -d
 Services will be available at:
 
 - Streamlit app: `http://localhost:8501`
-- `http://localhost:6333`
+- Qdrant: `http://localhost:6333`
+- SearXNG: `http://localhost:8080`
 
 To stop it:
 
@@ -233,6 +264,8 @@ Compose details:
 - The app image is built from [`src/Dockerfile`](./src/Dockerfile) using `debian:stable-slim`.
 - The app is started with `uv run streamlit run src/app.py`.
 - The app connects to Qdrant over the Compose network using `http://qdrant:6333`.
+- The app can reach SearXNG over the Compose network using `http://searxng:8080`.
+- SearXNG is configured via [`searxng/settings.yml`](./searxng/settings.yml), allows `format=json` responses, and uses a non-default `server.secret_key`.
 - Local runtime data is mounted from `.data/` into the container at `/app/.data`.
 - Environment variables are loaded from `src/.env` via `env_file`.
 
@@ -471,6 +504,8 @@ Instead of retrieving with the raw user prompt:
 The model did not change.  
 The improvement comes from encoding structural intent into retrieval rather than relying on the model to infer it.
 
+The same principle also applies to visual-example retrieval: the system does not pass an abstract style explanation directly into image search, but instead translates rules into a compact query specification and renders search terms that favor concrete wearable/contextual signals over broad moodboard language.
+
 Output structure is primarily influenced by retrieval design rather than model capability.
 
 ### Architectural Implication
@@ -492,6 +527,20 @@ This approach enables:
 It moves beyond traditional RAG into structured reasoning augmentation.
 
 ---
+
+## Explicit Search Over Hidden Grounding
+
+The project prefers explicit, replaceable search components over model-internal grounding.
+That applies not only to article retrieval but also to visual-example retrieval.
+Visual references are attached after the final structured answer so that examples remain subordinate to reasoning rather than replacing it.
+
+External search is treated as infrastructure:
+
+- queries are generated explicitly
+- search backends are replaceable
+- retrieved examples remain observable to the user
+
+This makes it easier to inspect failures, tune query rendering, and avoid vendor-locked hidden retrieval behavior.
 
 ## Future Work
 

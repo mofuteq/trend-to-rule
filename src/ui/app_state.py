@@ -21,6 +21,94 @@ def init_session_state() -> None:
         st.session_state.chat_id = str(st.session_state.chat_id)
 
 
+def get_chat_db(
+    *,
+    path: str,
+    db_names: list[str],
+) -> ChatDB:
+    """Get chat db instance from session state.
+
+    Args:
+        path: Chat DB filesystem path.
+        db_names: LMDB database names to open.
+
+    Returns:
+        ChatDB: Cached chat database instance.
+    """
+    if "chat_db" not in st.session_state:
+        st.session_state.chat_db = ChatDB(path=path, db_names=db_names)
+    return st.session_state.chat_db
+
+
+def get_or_create_anonymous_user_id(query_key: str) -> str:
+    """Get anonymous user id from query params or create one.
+
+    Args:
+        query_key: Query parameter key used to persist the anonymous id.
+
+    Returns:
+        str: Stable anonymous user id for the current browser session.
+    """
+    current_user_id = str(st.session_state.get("user_id") or "").strip()
+    if current_user_id:
+        return current_user_id
+
+    query_user_id = st.query_params.get(query_key, "")
+    if isinstance(query_user_id, list):
+        query_user_id = query_user_id[0] if query_user_id else ""
+    query_user_id = str(query_user_id or "").strip()
+    if not query_user_id:
+        import uuid
+
+        query_user_id = f"anon-{uuid.uuid4()}"
+        st.query_params[query_key] = query_user_id
+
+    st.session_state.user_id = query_user_id
+    return query_user_id
+
+
+def normalize_chat_id_list(raw_ids: list[object]) -> list[str]:
+    """Normalize chat id list loaded from storage.
+
+    Args:
+        raw_ids: Raw value loaded from `user_db`.
+
+    Returns:
+        list[str]: Deduplicated normalized chat ids.
+    """
+    normalized: list[str] = []
+    for raw_id in raw_ids:
+        if isinstance(raw_id, str):
+            if raw_id and raw_id not in normalized:
+                normalized.append(raw_id)
+            continue
+        if isinstance(raw_id, list):
+            for nested_id in raw_id:
+                if isinstance(nested_id, str) and nested_id and nested_id not in normalized:
+                    normalized.append(nested_id)
+    return normalized
+
+
+def load_user_chat_ids(user_id: str, chat_db: ChatDB, user_db_name: str) -> list[str]:
+    """Load and normalize chat ids for one user.
+
+    Args:
+        user_id: Current user id.
+        chat_db: Chat database instance.
+        user_db_name: Database name for user/chat mappings.
+
+    Returns:
+        list[str]: User chat ids sorted by stored order.
+    """
+    user_chat_ids = chat_db.get(key=user_id, db_name=user_db_name)
+    if not isinstance(user_chat_ids, list):
+        return []
+    normalized_user_chat_ids = normalize_chat_id_list(user_chat_ids)
+    if normalized_user_chat_ids != user_chat_ids:
+        chat_db.put(key=user_id, value=normalized_user_chat_ids, db_name=user_db_name)
+    return normalized_user_chat_ids
+
+
 def start_new_chat_session(chat_id: str) -> None:
     """Reset chat-related session state for a new conversation."""
     st.session_state.chat_id = chat_id

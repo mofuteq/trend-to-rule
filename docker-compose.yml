@@ -6,11 +6,13 @@ services:
     container_name: trend-to-rule-app
     depends_on:
       - qdrant
+      - searxng
     env_file:
       - ./src/.env
     environment:
       VECTOR_QDRANT_URL: http://qdrant:6333
       VECTOR_QDRANT_PATH: ""
+      SEARXNG_BASE_URL: http://searxng:8080
     ports:
       - "8501:8501"
     volumes:
@@ -24,6 +26,17 @@ services:
       - "6333:6333"
     volumes:
       - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  searxng:
+    image: searxng/searxng:2026.3.20-6c7e9c197
+    container_name: trend-to-rule-searxng
+    ports:
+      - "8080:8080"
+    environment:
+      BASE_URL: http://localhost:8080/
+    volumes:
+      - ./searxng:/etc/searxng:rw
     restart: unless-stopped
 
 volumes:

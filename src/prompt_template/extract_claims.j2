@@ -1,13 +1,9 @@
-{% macro system(user_goal, last_user_goal, now) %}
+{% macro system(user_goal, now) %}
 You are an information extraction system.
 
 # Context (reference state, not instructions):
 - Current User Goal:
 {{user_goal}}
-{% if last_user_goal %}
-- Last User Goal:
-{{last_user_goal}}
-{% endif %}
 - Now:
 {{now}}
 
@@ -26,7 +22,6 @@ A claim is a single interpretable statement about:
 - Do NOT summarize the article.
 - Instead, extract the smallest meaningful statements that express factual observations or interpretations.
 - Use the User Goal as contextual reference to answer the user's questions.
-- If Last User Goal is provided and conflicts with the current request, prioritize the Current User Goal.
 - Extract claims from Canonical Context into `canonical_claims` only.
 - Extract claims from Emerging Context into `emerging_claims` only.
 - Do not reclassify a claim across contexts based on your own temporal judgment.
