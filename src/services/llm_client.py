@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal, Sequence, TypeVar
@@ -19,7 +20,6 @@ from google.genai.types import (
 )
 from openai import OpenAI
 from pydantic import BaseModel
-from tenacity import Retrying, stop_after_attempt, wait_fixed
 
 from core.text_utils import normalize_text_nfkc
 
@@ -62,6 +62,19 @@ GEMINI_THINKING_BUDGET_BY_REASONING_EFFORT: dict[str, int] = {
     "medium": 1024,
     "high": 2048,
 }
+
+
+def _is_resource_exhausted_error(err: Exception) -> bool:
+    """Return True when the backend reports quota/resource exhaustion."""
+    msg = str(err).lower()
+    return (
+        "resource_exhausted" in msg
+        or "429" in msg
+        or "quota" in msg
+        or "rate limit" in msg
+        or "rate_limit" in msg
+        or "too many requests" in msg
+    )
 
 
 def create(
@@ -182,22 +195,32 @@ def _create_with_gemini(
         if model_name not in model_candidates:
             model_candidates.append(model_name)
 
-    res: GenerateContentResponse
+    res: GenerateContentResponse | None = None
     selected_model = model
-    for attempt in Retrying(
-        stop=stop_after_attempt(len(model_candidates)),
-        wait=wait_fixed(1),
-        reraise=True,
-    ):
-        with attempt:
-            idx = min(attempt.retry_state.attempt_number -
-                      1, len(model_candidates) - 1)
-            selected_model = model_candidates[idx]
+    last_error: Exception | None = None
+    for idx, candidate_model in enumerate(model_candidates):
+        selected_model = candidate_model
+        try:
             res = client.models.generate_content(
                 model=selected_model,
                 contents=(history + contents) if history else contents,
                 config=config,
             )
+            break
+        except Exception as err:
+            last_error = err
+            if idx >= len(model_candidates) - 1:
+                raise
+            logger.warning(
+                "gemini_fallback from=%s to=%s reason=%s",
+                selected_model,
+                model_candidates[idx + 1],
+                err,
+            )
+            if not _is_resource_exhausted_error(err):
+                time.sleep(1)
+    if res is None and last_error is not None:
+        raise last_error
     logger.info(
         "llm_response backend=gemini model=%s response_model=%s",
         selected_model,

@@ -31,12 +31,17 @@ TEMPLATE_IMAGE_QUERY = get_j2_template(
     searchpath=TEMPLATE_SEARCH_PATH,
     name="generate_image_query.j2",
 )
+TEMPLATE_CHAT_TITLE = get_j2_template(
+    searchpath=TEMPLATE_SEARCH_PATH,
+    name="generate_chat_title.j2",
+)
 TEMPLATE_DECISION_SUPPORT = get_j2_template(
     searchpath=TEMPLATE_SEARCH_PATH,
     name="generate_decision_support.j2",
 )
 
 __all__ = [
+    "TEMPLATE_CHAT_TITLE",
     "TEMPLATE_DECISION_SUPPORT",
     "TEMPLATE_IMAGE_QUERY",
     "TEMPLATE_INFER_ARTICLE",

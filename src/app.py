@@ -1,5 +1,6 @@
 import logging
 import uuid
+from pathlib import Path
 
 import streamlit as st
 
@@ -18,6 +19,15 @@ from ui.app_state import (
     start_new_chat_session,
 )
 CONFIG = load_app_config()
+SRC_ROOT = Path(__file__).resolve().parent
+
+
+def inject_css_file(path: Path) -> None:
+    """Load a CSS file and inject it into the Streamlit app."""
+    st.markdown(
+        f"<style>{path.read_text(encoding='utf-8')}</style>",
+        unsafe_allow_html=True,
+    )
 
 
 def main() -> None:
@@ -28,7 +38,10 @@ def main() -> None:
         force=True,
     )
     st.set_page_config(page_title="trend-to-rule", layout="centered")
-    st.title("🧩trend-to-rule")
+    inject_css_file(SRC_ROOT / "ui" / "fonts.css")
+    inject_css_file(SRC_ROOT / "ui" / "user_avatar.css")
+    st.title("trend-to-rule")
+    st.caption("Distill trends into rules, grounded in visuals.")
 
     init_session_state()
     user_id = get_or_create_anonymous_user_id(CONFIG.anonymous_user_query_key)
@@ -43,14 +56,6 @@ def main() -> None:
             CONFIG.chat_meta_db_name,
         ],
     )
-    if st.sidebar.button("New Chat", use_container_width=True):
-        st.session_state.clear()
-        init_session_state()
-        start_new_chat_session(
-            chat_id=str(uuid.uuid4())
-        )
-        st.rerun()
-
     user_chat_ids = load_user_chat_ids(
         user_id=user_id,
         chat_db=chat_db,
@@ -61,6 +66,43 @@ def main() -> None:
         chat_db=chat_db,
         chat_meta_db_name=CONFIG.chat_meta_db_name,
     )
+    if (
+        st.session_state.pending_delete_chat_id
+        and st.session_state.pending_delete_chat_id != st.session_state.chat_id
+    ):
+        st.session_state.pending_delete_chat_id = ""
+
+    new_chat_col, delete_chat_col = st.sidebar.columns(2)
+    if new_chat_col.button("New Chat", use_container_width=True):
+        st.session_state.clear()
+        init_session_state()
+        start_new_chat_session(chat_id=str(uuid.uuid4()))
+        st.rerun()
+
+    if delete_chat_col.button("Delete Chat", use_container_width=True):
+        st.session_state.pending_delete_chat_id = st.session_state.chat_id
+        st.rerun()
+
+    if st.session_state.pending_delete_chat_id:
+        st.sidebar.caption("Delete this chat history?")
+        confirm_col, cancel_col = st.sidebar.columns(2)
+        if confirm_col.button("Confirm", use_container_width=True):
+            chat_id_to_delete = st.session_state.pending_delete_chat_id
+            chat_db.delete(chat_id_to_delete, CONFIG.chat_db_name)
+            chat_db.delete(chat_id_to_delete, CONFIG.chat_meta_db_name)
+            remaining_chat_ids = [
+                chat_id for chat_id in user_chat_ids if chat_id != chat_id_to_delete
+            ]
+            chat_db.put(user_id, remaining_chat_ids, CONFIG.user_db_name)
+            st.session_state.clear()
+            init_session_state()
+            start_new_chat_session(chat_id=str(uuid.uuid4()))
+            st.rerun()
+
+        if cancel_col.button("Cancel", use_container_width=True):
+            st.session_state.pending_delete_chat_id = ""
+            st.rerun()
+
     setup_vector_search_ui(
         vector_collection=CONFIG.vector_collection,
         vector_model_name=CONFIG.vector_model_name,

@@ -1,0 +1,30 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
+html,
+body,
+[class*="css"],
+[data-testid="stAppViewContainer"],
+[data-testid="stSidebar"],
+[data-testid="stHeader"],
+[data-testid="stHeading"],
+[data-testid="stMarkdownContainer"],
+[data-testid="stChatMessageContent"],
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+button,
+input,
+textarea,
+select {
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+}
+
+code,
+pre,
+kbd,
+samp {
+    font-family: "SFMono-Regular", "SF Mono", Monaco, Consolas, "Liberation Mono", monospace !important;
+}

@@ -1,0 +1,18 @@
+{% macro system() -%}
+You generate concise chat titles from conversation history.
+
+Requirements:
+- Return only one short title in plain text.
+- Keep it under 7 words.
+- Be specific and readable.
+- Do not use quotation marks.
+- Do not use markdown.
+- Do not add prefixes such as "Title:".
+- Do not end with punctuation.
+{%- endmacro %}
+
+{% macro user(conversation_history) -%}
+Generate a short chat title for this conversation:
+
+{{ conversation_history }}
+{%- endmacro %}

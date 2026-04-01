@@ -120,6 +120,20 @@ class ChatDB:
                 overwrite=overwrite
             )
 
+    def delete(self, key: str, db_name: str) -> bool:
+        """Delete a key from the specified database.
+
+        Args:
+            key: Key to delete.
+            db_name: Target database name.
+
+        Returns:
+            bool: `True` if the key existed and was deleted, otherwise `False`.
+        """
+        db = self._get_db(db_name)
+        with self.env.begin(db=db, write=True) as txn:
+            return txn.delete(key.encode("utf-8"))
+
     def keys(
         self,
         db_name: str

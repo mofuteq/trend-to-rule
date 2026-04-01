@@ -15,6 +15,7 @@ def init_session_state() -> None:
     st.session_state.setdefault("last_user_goal", "")
     st.session_state.setdefault("chat_id", "")
     st.session_state.setdefault("loaded_chat_id", "")
+    st.session_state.setdefault("pending_delete_chat_id", "")
     st.session_state.setdefault("vector_searcher", None)
     st.session_state.setdefault("vector_error", "")
     if not isinstance(st.session_state.chat_id, str):
@@ -142,10 +143,58 @@ def load_active_chat(chat_db: ChatDB, chat_db_name: str) -> None:
 
 
 def update_chat_meta(chat_id: str, chat_db: ChatDB, chat_meta_db_name: str) -> None:
-    """Update chat modified time."""
+    """Update chat metadata while preserving existing fields."""
+    existing_meta = chat_db.get(
+        key=chat_id,
+        db_name=chat_meta_db_name,
+    )
+    meta = existing_meta if isinstance(existing_meta, dict) else {}
+    meta["updated_at_ts"] = datetime.now(tz=timezone.utc).timestamp()
     chat_db.put(
         key=chat_id,
-        value={"updated_at_ts": datetime.now(tz=timezone.utc).timestamp()},
+        value=meta,
+        db_name=chat_meta_db_name,
+    )
+
+
+def get_chat_meta(chat_id: str, chat_db: ChatDB, chat_meta_db_name: str) -> dict:
+    """Return chat metadata as a dict.
+
+    Args:
+        chat_id: Chat id to load.
+        chat_db: Chat database instance.
+        chat_meta_db_name: Database name for chat metadata.
+
+    Returns:
+        dict: Chat metadata or an empty dict.
+    """
+    meta = chat_db.get(key=chat_id, db_name=chat_meta_db_name)
+    return meta if isinstance(meta, dict) else {}
+
+
+def set_chat_title(
+    chat_id: str,
+    title: str,
+    chat_db: ChatDB,
+    chat_meta_db_name: str,
+) -> None:
+    """Set chat title while preserving existing metadata.
+
+    Args:
+        chat_id: Chat id to update.
+        title: Generated chat title.
+        chat_db: Chat database instance.
+        chat_meta_db_name: Database name for chat metadata.
+    """
+    meta = get_chat_meta(
+        chat_id=chat_id,
+        chat_db=chat_db,
+        chat_meta_db_name=chat_meta_db_name,
+    )
+    meta["title"] = title
+    chat_db.put(
+        key=chat_id,
+        value=meta,
         db_name=chat_meta_db_name,
     )
 

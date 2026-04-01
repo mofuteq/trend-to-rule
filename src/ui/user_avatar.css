@@ -1,0 +1,9 @@
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageContent"][aria-label="Chat message from user"])
+[data-testid="stChatMessageAvatarUser"] {
+    display: none !important;
+}
+
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageContent"][aria-label="Chat message from user"])
+[data-testid="stChatMessageContent"] {
+    margin-left: 0 !important;
+}

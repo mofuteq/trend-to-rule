@@ -22,6 +22,7 @@ def setup_chat_selector(
         ids.insert(0, st.session_state.chat_id)
 
     updated_at_by_chat: dict[str, float] = {}
+    title_by_chat: dict[str, str] = {}
     for chat_id in ids:
         updated_at = 0.0
         meta = chat_db.get(key=chat_id, db_name=chat_meta_db_name)
@@ -29,6 +30,7 @@ def setup_chat_selector(
             updated_at_ts = meta.get("updated_at_ts")
             if isinstance(updated_at_ts, (int, float)):
                 updated_at = float(updated_at_ts)
+            title_by_chat[chat_id] = str(meta.get("title") or "").strip()
         updated_at_by_chat[chat_id] = updated_at
 
     sorted_chat_ids = sorted(
@@ -42,17 +44,17 @@ def setup_chat_selector(
 
     selected_index = sorted_chat_ids.index(st.session_state.chat_id) if st.session_state.chat_id in sorted_chat_ids else 0
     selected_chat_id = st.sidebar.selectbox(
-        label="chat_id",
+        label="History",
         options=sorted_chat_ids,
         index=selected_index,
         format_func=lambda chat_id: (
-            f"{chat_id} (new)"
+            f"{title_by_chat.get(chat_id) or chat_id} (new)"
             if updated_at_by_chat.get(chat_id, 0.0) <= 0
             and chat_id not in user_chat_ids
             else
-            f"{chat_id} ({datetime.fromtimestamp(updated_at_by_chat.get(chat_id, 0.0), tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')})"
+            f"{title_by_chat.get(chat_id) or chat_id} ({datetime.fromtimestamp(updated_at_by_chat.get(chat_id, 0.0), tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')})"
             if updated_at_by_chat.get(chat_id, 0.0) > 0
-            else chat_id
+            else title_by_chat.get(chat_id) or chat_id
         ),
     )
     st.session_state.chat_id = str(selected_chat_id)
@@ -74,8 +76,6 @@ def setup_vector_search_ui(
         st.sidebar.error(st.session_state.vector_error)
         return
 
-    st.sidebar.caption("Vector search: always on")
-
     if st.session_state.vector_searcher is None:
         try:
             st.session_state.vector_searcher = HybridVectorSearcher(
@@ -91,3 +91,7 @@ def setup_vector_search_ui(
 
     if st.session_state.vector_error:
         st.sidebar.error(st.session_state.vector_error)
+    else:
+        st.sidebar.caption(
+            "AI-generated content may contain mistakes. Please verify important details with the original sources."
+        )

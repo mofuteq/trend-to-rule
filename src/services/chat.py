@@ -14,6 +14,7 @@ from core.models import (
 )
 from services.llm_client import DEFAULT_OPENAI_MODEL, create
 from services.prompt_service import (
+    TEMPLATE_CHAT_TITLE,
     TEMPLATE_DECISION_SUPPORT,
     TEMPLATE_IMAGE_QUERY,
     TEMPLATE_INFER_ARTICLE,
@@ -168,6 +169,7 @@ __all__ = [
     "analyze_user_needs",
     "extract_claims",
     "extract_structured_draft",
+    "generate_chat_title",
     "generate_decision_support",
     "generate_query",
     "generate_search_query",
@@ -287,3 +289,45 @@ def generate_query(
         reasoning_effort="low",
     )
     return res
+
+
+def generate_chat_title(
+    messages: list[dict[str, str]],
+    api_key: str | None = None,
+) -> str:
+    """Generate a short chat title from chat history.
+
+    Args:
+        messages: Chat messages in chronological order.
+        api_key: Gemini API key when Gemini backend is used.
+
+    Returns:
+        str: Short chat title suitable for sidebar history display.
+    """
+    conversation_lines: list[str] = []
+    for message in messages[-8:]:
+        role = str(message.get("role") or "").strip() or "user"
+        content = str(message.get("content") or "").strip()
+        if not content:
+            continue
+        conversation_lines.append(f"{role}: {content}")
+
+    prompt = "\n".join(conversation_lines).strip()
+    if not prompt:
+        return "Untitled chat"
+
+    res = create(
+        user_prompt=TEMPLATE_CHAT_TITLE
+        .module.user(
+            conversation_history=prompt
+        ),
+        system_prompt=TEMPLATE_CHAT_TITLE
+        .module.system(),
+        api_key=api_key,
+        model="gemini-2.5-flash",
+        temperature=0.2,
+        top_p=0.8,
+        reasoning_effort="low",
+    )
+    title = str(res.text or "").strip()
+    return title or "Untitled chat"

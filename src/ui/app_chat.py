@@ -1,9 +1,11 @@
+import logging
+
 import streamlit as st
 
 from core.app_config import AppConfig
 from core.text_utils import normalize_text_nfkc
 from retrieval.app_retrieval import build_retrieved_results_html_table
-from services.chat import analyze_user_needs
+from services.chat import analyze_user_needs, generate_chat_title
 from services.chat_workflow import (
     RetrievalBundle,
     generate_assistant_response,
@@ -11,14 +13,22 @@ from services.chat_workflow import (
 )
 from services.image_search import ImageSearchResult
 from storage.chat_db import ChatDB
-from ui.app_state import add_message
+from ui.app_state import add_message, get_chat_meta, set_chat_title
+
+logger = logging.getLogger(__name__)
+ASSISTANT_AVATAR = ":material/auto_awesome:"
 
 
 def render_history() -> None:
     """Render stored chat history."""
     for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+        if message["role"] == "assistant":
+            with st.chat_message(message["role"], avatar=ASSISTANT_AVATAR):
+                st.markdown(message["content"])
+        else:
+            with st.chat_message(message["role"], avatar=None):
+                st.markdown(message["content"])
+            
 
 
 def render_image_results(image_results: list[ImageSearchResult]) -> None:
@@ -121,9 +131,9 @@ def process_user_prompt(
         chat_db_name=config.chat_db_name,
         chat_meta_db_name=config.chat_meta_db_name,
     )
-    with st.chat_message("user"):
+    with st.chat_message("user", avatar=None):
         st.markdown(normalized_prompt)
-    with st.chat_message("assistant"):
+    with st.chat_message("assistant", avatar=ASSISTANT_AVATAR):
         with st.status("Analyzing...", expanded=False) as status:
             user_needs = analyze_user_needs(
                 user_prompt=normalized_prompt,
@@ -171,6 +181,25 @@ def process_user_prompt(
         chat_db_name=config.chat_db_name,
         chat_meta_db_name=config.chat_meta_db_name,
     )
+    chat_meta = get_chat_meta(
+        chat_id=st.session_state.chat_id,
+        chat_db=chat_db,
+        chat_meta_db_name=config.chat_meta_db_name,
+    )
+    if not str(chat_meta.get("title") or "").strip():
+        try:
+            generated_title = generate_chat_title(
+                messages=st.session_state.messages,
+            )
+            if generated_title:
+                set_chat_title(
+                    chat_id=st.session_state.chat_id,
+                    title=generated_title,
+                    chat_db=chat_db,
+                    chat_meta_db_name=config.chat_meta_db_name,
+                )
+        except Exception as err:
+            logger.warning("Failed to generate chat title: %s", err)
     st.session_state.last_user_goal = user_needs.user_goal
     if st.session_state.chat_id not in user_chat_ids:
         user_chat_ids.append(st.session_state.chat_id)
@@ -193,7 +222,7 @@ def render_chat_input(
         user_id: Current anonymous user id.
         config: App runtime config.
     """
-    user_prompt = st.chat_input("Let's Chat🚀")
+    user_prompt = st.chat_input("Start with a question")
     if user_prompt:
         process_user_prompt(
             user_prompt=user_prompt,
