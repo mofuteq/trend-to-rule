@@ -110,6 +110,44 @@ def load_user_chat_ids(user_id: str, chat_db: ChatDB, user_db_name: str) -> list
     return normalized_user_chat_ids
 
 
+def sort_chat_ids_by_last_updated(
+    chat_ids: list[str],
+    chat_db: ChatDB,
+    chat_meta_db_name: str,
+) -> tuple[list[str], dict[str, float], dict[str, str]]:
+    """Sort chat ids by last updated timestamp in descending order.
+
+    Args:
+        chat_ids: Chat ids to sort.
+        chat_db: Chat database instance.
+        chat_meta_db_name: Database name for chat metadata.
+
+    Returns:
+        tuple[list[str], dict[str, float], dict[str, str]]:
+            Sorted chat ids, updated timestamps by chat id, and titles by chat id.
+    """
+    updated_at_by_chat: dict[str, float] = {}
+    title_by_chat: dict[str, str] = {}
+    for chat_id in chat_ids:
+        meta = get_chat_meta(
+            chat_id=chat_id,
+            chat_db=chat_db,
+            chat_meta_db_name=chat_meta_db_name,
+        )
+        updated_at_ts = meta.get("updated_at_ts")
+        updated_at_by_chat[chat_id] = (
+            float(updated_at_ts) if isinstance(updated_at_ts, (int, float)) else 0.0
+        )
+        title_by_chat[chat_id] = str(meta.get("title") or "").strip()
+
+    sorted_chat_ids = sorted(
+        chat_ids,
+        key=lambda chat_id: updated_at_by_chat.get(chat_id, 0.0),
+        reverse=True,
+    )
+    return sorted_chat_ids, updated_at_by_chat, title_by_chat
+
+
 def start_new_chat_session(chat_id: str) -> None:
     """Reset chat-related session state for a new conversation."""
     st.session_state.chat_id = chat_id

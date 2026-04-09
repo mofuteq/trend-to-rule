@@ -75,7 +75,7 @@ def load_app_config() -> AppConfig:
         vector_per_query_top_k=int(os.getenv("VECTOR_PER_QUERY_TOP_K", "5")),
         vector_mmr_diversity=float(os.getenv("VECTOR_MMR_DIVERSITY", "0.3")),
         app_log_level=os.getenv("APP_LOG_LEVEL", "INFO").upper(),
-        searxng_base_url=os.getenv("SEARXNG_BASE_URL", "http://localhost:8080"),
+        searxng_base_url=os.getenv("SEARXNG_BASE_URL", "http://localhost:8008"),
         searxng_image_limit=int(os.getenv("SEARXNG_IMAGE_LIMIT", "3")),
         anonymous_user_query_key="uid",
     )

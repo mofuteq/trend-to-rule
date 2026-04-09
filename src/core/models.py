@@ -2,6 +2,9 @@ from typing import Literal
 from pydantic import BaseModel
 
 
+VERTICAL = Literal["mens", "womens", "unisex", "unknown"]
+
+
 # Response Model
 class SearchQuery(BaseModel):
     canonical_query: str
@@ -16,11 +19,12 @@ class UserGoal(BaseModel):
 class UserNeeds(BaseModel):
     user_goal: str
     candidate_queries: SearchQuery
+    vertical: VERTICAL
     reason: str
 
 
 class ArticleAttribute(BaseModel):
-    vertical: Literal["mens", "womens", "unisex", "unknown"]
+    vertical: VERTICAL
     language: str
 
 

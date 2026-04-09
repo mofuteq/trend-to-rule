@@ -5,7 +5,7 @@ import httpx
 from pydantic import BaseModel, field_validator
 
 
-DEFAULT_SEARXNG_BASE_URL = "http://localhost:8080"
+DEFAULT_SEARXNG_BASE_URL = "http://localhost:8008"
 DEFAULT_HEADERS = {
     "User-Agent": "Mozilla/5.0",
     "Accept": "application/json",

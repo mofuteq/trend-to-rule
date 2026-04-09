@@ -1,7 +1,7 @@
 """Domain-level chat service functions built on top of the LLM client."""
 
 from datetime import datetime
-
+from typing import Literal
 from core.models import (
     UserNeeds,
     UserGoal,
@@ -58,6 +58,42 @@ def generate_search_query(
     return search_query
 
 
+def infer_attribute(
+    input_text: str,
+    task: Literal["article", "user_prompt"] = "article",
+    api_key: str | None = None,
+    model: str = DEFAULT_OPENAI_MODEL
+) -> ArticleAttribute:
+    """Infer structured attributes from article text.
+
+    Args:
+        input_text (str): Source text used for attribute inference.
+        task (Literal["article", "user_prompt"]): Prompt mode that controls whether
+            the input text should be interpreted as article content or a user prompt.
+        api_key (str | None): Gemini API key when Gemini model is selected.
+            If omitted, environment value is used.
+        model (str): Model name for inference. Defaults to `DEFAULT_OPENAI_MODEL`.
+
+    Returns:
+        ArticleAttribute: Structured attributes inferred from the supplied text.
+    """
+    res = create(
+        user_prompt=TEMPLATE_INFER_ARTICLE
+        .module.user(
+            input_text=input_text,
+            task=task
+        ),
+        response_model=ArticleAttribute,
+        api_key=api_key,
+        model=model,
+        temperature=0.0,
+        top_p=0.6,
+        seed=42,
+        reasoning_effort="low"
+    )
+    return res
+
+
 def analyze_user_needs(
     user_prompt: str,
     api_key: str | None = None,
@@ -93,43 +129,17 @@ def analyze_user_needs(
         user_goal=user_goal.user_goal,
         last_user_goal=last_user_goal
     )
+    vertical = infer_attribute(
+        input_text=user_prompt,
+        task="user_prompt",
+        model="gemini-2.5-flash"
+    ).vertical
     return UserNeeds(
         user_goal=user_goal.user_goal,
         candidate_queries=search_query,
+        vertical=vertical,
         reason=user_goal.reason
     )
-
-
-def infer_article_attribute(
-    article_text: str,
-    api_key: str | None = None,
-    model: str = DEFAULT_OPENAI_MODEL
-) -> ArticleAttribute:
-    """Infer structured attributes from article text.
-
-    Args:
-        article_text (str): Article text used for attribute inference.
-        api_key (str | None): Gemini API key when Gemini model is selected.
-            If omitted, environment value is used.
-        model (str): Model name for inference. Defaults to `DEFAULT_OPENAI_MODEL`.
-
-    Returns:
-        ArticleAttribute: Structured attributes inferred from the article.
-    """
-    res = create(
-        user_prompt=TEMPLATE_INFER_ARTICLE
-        .module.user(
-            article_text=article_text
-        ),
-        response_model=ArticleAttribute,
-        api_key=api_key,
-        model=model,
-        temperature=0.0,
-        top_p=0.6,
-        seed=42,
-        reasoning_effort="low"
-    )
-    return res
 
 
 def extract_claims(
@@ -173,7 +183,7 @@ __all__ = [
     "generate_decision_support",
     "generate_query",
     "generate_search_query",
-    "infer_article_attribute",
+    "infer_attribute",
 ]
 
 

@@ -93,7 +93,7 @@ def iter_lmdb(path: Path):
     env = lmdb.open(
         str(path),
         readonly=True,
-        lock=False,
+        lock=True,
         readahead=False,
         subdir=True,
     )
@@ -114,7 +114,7 @@ def load_lmdb_keys(path: Path) -> set[str]:
     env = lmdb.open(
         str(path),
         readonly=True,
-        lock=False,
+        lock=True,
         readahead=False,
         subdir=True,
     )

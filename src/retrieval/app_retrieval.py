@@ -7,6 +7,7 @@ from qdrant_client import models
 logger = logging.getLogger(__name__)
 EMERGING_DECAY_WINDOW_SECONDS = 180 * 24 * 60 * 60
 EMERGING_RECENCY_BOOST_WEIGHT = 0.1
+VERTICAL_MATCH_BOOST_WEIGHT = 0.1
 
 
 def _scores(points: list[object]) -> list[float]:
@@ -43,6 +44,7 @@ def retrieve_vector_results_by_queries(
     *,
     canonical_query: str,
     emerging_query: str,
+    user_vertical: str,
     vector_candidate_k: int,
     mmr_diversity: float = 0.3,
     per_query_top_k: int = 5,
@@ -66,17 +68,21 @@ def retrieve_vector_results_by_queries(
             query_text=query_text,
             vector_candidate_k=vector_candidate_k,
             query_filter=time_filter,
+            vertical_match_value=user_vertical,
+            vertical_boost_weight=VERTICAL_MATCH_BOOST_WEIGHT,
         )
         logger.info(
-            "retrieval kind=%s stage=hybrid count=%s scores=%s",
+            "retrieval kind=%s stage=hybrid user_vertical=%s count=%s scores=%s",
             kind,
+            user_vertical,
             len(points),
             [round(s, 6) for s in _scores(points)],
         )
         missing_ts, min_ts, max_ts = _published_ts_stats(points)
         logger.info(
-            "retrieval kind=%s stage=hybrid published_ts missing=%s min=%s max=%s threshold=%s",
+            "retrieval kind=%s stage=hybrid user_vertical=%s published_ts missing=%s min=%s max=%s threshold=%s",
             kind,
+            user_vertical,
             missing_ts,
             min_ts,
             max_ts,
@@ -92,8 +98,9 @@ def retrieve_vector_results_by_queries(
                 deduped[dedupe_key] = raw_point_id
         candidate_ids = list(deduped.values())
         logger.info(
-            "retrieval kind=%s stage=dedupe count=%s id_types=%s",
+            "retrieval kind=%s stage=dedupe user_vertical=%s count=%s id_types=%s",
             kind,
+            user_vertical,
             len(candidate_ids),
             sorted({type(pid).__name__ for pid in candidate_ids}) if candidate_ids else [],
         )
@@ -105,13 +112,16 @@ def retrieve_vector_results_by_queries(
             diversity=mmr_diversity,
             top_k=per_query_top_k,
             base_filter=time_filter,
+            vertical_match_value=user_vertical,
+            vertical_boost_weight=VERTICAL_MATCH_BOOST_WEIGHT,
             recency_boost_weight=(EMERGING_RECENCY_BOOST_WEIGHT if kind == "emerging" else 0.0),
             recency_target_ts=(now_ts if kind == "emerging" else None),
             recency_scale_seconds=(EMERGING_DECAY_WINDOW_SECONDS if kind == "emerging" else None),
         )
         logger.info(
-            "retrieval kind=%s stage=mmr count=%s scores=%s",
+            "retrieval kind=%s stage=mmr user_vertical=%s count=%s scores=%s",
             kind,
+            user_vertical,
             len(mmr_points),
             [round(s, 6) for s in _scores(mmr_points)],
         )
@@ -145,6 +155,8 @@ def hybrid_search_with_filter(
     query_text: str,
     vector_candidate_k: int,
     query_filter: models.Filter,
+    vertical_match_value: str | None = None,
+    vertical_boost_weight: float = 0.0,
 ) -> list[object]:
     """Run hybrid search with a Qdrant filter."""
     if st.session_state.vector_searcher is None:
@@ -154,6 +166,8 @@ def hybrid_search_with_filter(
         query_text=query_text,
         candidate_k=vector_candidate_k,
         query_filter=query_filter,
+        vertical_match_value=vertical_match_value,
+        vertical_boost_weight=vertical_boost_weight,
     )
 
 
@@ -164,6 +178,8 @@ def qdrant_mmr_rerank_for_query(
     diversity: float,
     top_k: int,
     base_filter: models.Filter,
+    vertical_match_value: str | None = None,
+    vertical_boost_weight: float = 0.0,
     recency_boost_weight: float = 0.0,
     recency_target_ts: int | None = None,
     recency_scale_seconds: int | None = None,
@@ -178,6 +194,8 @@ def qdrant_mmr_rerank_for_query(
         diversity=diversity,
         top_k=top_k,
         base_filter=base_filter,
+        vertical_match_value=vertical_match_value,
+        vertical_boost_weight=vertical_boost_weight,
         recency_boost_weight=recency_boost_weight,
         recency_target_ts=recency_target_ts,
         recency_scale_seconds=recency_scale_seconds,

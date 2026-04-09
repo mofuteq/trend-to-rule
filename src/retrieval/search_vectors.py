@@ -23,6 +23,7 @@ DATA_DIR = PROJECT_ROOT / ".data"
 DEFAULT_QDRANT_URL = "http://localhost:6333"
 DEFAULT_COLLECTION = "article_markdown_bge_m3"
 DEFAULT_MODEL_NAME = "BAAI/bge-m3"
+VERTICAL_BOOSTABLE_VALUES = {"mens", "womens", "unisex"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -136,6 +137,61 @@ def _extract_scores(points: list[Any]) -> list[float]:
     return scores
 
 
+def _build_score_formula(
+    *,
+    vertical_match_value: str | None = None,
+    vertical_boost_weight: float = 0.0,
+    recency_boost_weight: float = 0.0,
+    recency_target_ts: int | None = None,
+    recency_scale_seconds: int | None = None,
+) -> models.FormulaQuery | None:
+    """Build a Qdrant formula query for payload-aware score boosts."""
+    terms: list[Any] = ["$score"]
+
+    normalized_vertical = (vertical_match_value or "").strip().lower()
+    if (
+        vertical_boost_weight > 0.0
+        and normalized_vertical in VERTICAL_BOOSTABLE_VALUES
+    ):
+        terms.append(
+            models.MultExpression(
+                mult=[
+                    float(vertical_boost_weight),
+                    models.FieldCondition(
+                        key="vertical",
+                        match=models.MatchValue(value=normalized_vertical),
+                    ),
+                ]
+            )
+        )
+
+    if (
+        recency_boost_weight > 0.0
+        and recency_target_ts is not None
+        and recency_scale_seconds is not None
+        and recency_scale_seconds > 0
+    ):
+        terms.append(
+            models.MultExpression(
+                mult=[
+                    float(recency_boost_weight),
+                    models.LinDecayExpression(
+                        lin_decay=models.DecayParamsExpression(
+                            x="published_ts",
+                            target=float(recency_target_ts),
+                            scale=float(recency_scale_seconds),
+                            midpoint=0.5,
+                        )
+                    ),
+                ]
+            )
+        )
+
+    if len(terms) == 1:
+        return None
+    return models.FormulaQuery(formula=models.SumExpression(sum=terms))
+
+
 class HybridVectorSearcher:
     """Hybrid vector searcher using bge-m3 and Qdrant."""
 
@@ -202,6 +258,11 @@ class HybridVectorSearcher:
         query_text: str,
         candidate_k: int,
         query_filter: models.Filter | None = None,
+        vertical_match_value: str | None = None,
+        vertical_boost_weight: float = 0.0,
+        recency_boost_weight: float = 0.0,
+        recency_target_ts: int | None = None,
+        recency_scale_seconds: int | None = None,
     ) -> list[Any]:
         """Run hybrid RRF search with optional filter."""
         client = self._get_client()
@@ -220,10 +281,17 @@ class HybridVectorSearcher:
                 filter=query_filter,
             ),
         ]
+        formula_query = _build_score_formula(
+            vertical_match_value=vertical_match_value,
+            vertical_boost_weight=vertical_boost_weight,
+            recency_boost_weight=recency_boost_weight,
+            recency_target_ts=recency_target_ts,
+            recency_scale_seconds=recency_scale_seconds,
+        )
         resp = client.query_points(
             collection_name=self.collection,
             prefetch=prefetch,
-            query=models.FusionQuery(fusion=models.Fusion.RRF),
+            query=formula_query or models.FusionQuery(fusion=models.Fusion.RRF),
             query_filter=query_filter,
             limit=candidate_k,
             with_payload=True,
@@ -231,8 +299,10 @@ class HybridVectorSearcher:
         points = list(resp.points)
         scores = _extract_scores(points)
         logger.info(
-            "hybrid=rrf filter=%s candidate_k=%s results_count=%s scores=%s",
+            "hybrid=rrf filter=%s vertical_boost=%s recency_boost=%s candidate_k=%s results_count=%s scores=%s",
             "on" if query_filter else "off",
+            "on" if vertical_boost_weight > 0.0 and vertical_match_value else "off",
+            "on" if formula_query and recency_boost_weight > 0.0 else "off",
             candidate_k,
             len(points),
             [round(s, 6) for s in scores],
@@ -247,6 +317,8 @@ class HybridVectorSearcher:
         diversity: float,
         top_k: int,
         base_filter: models.Filter | None = None,
+        vertical_match_value: str | None = None,
+        vertical_boost_weight: float = 0.0,
         recency_boost_weight: float = 0.0,
         recency_target_ts: int | None = None,
         recency_scale_seconds: int | None = None,
@@ -267,31 +339,15 @@ class HybridVectorSearcher:
             ]
         )
 
-        use_recency_boost = (
-            recency_boost_weight > 0.0
-            and recency_target_ts is not None
-            and recency_scale_seconds is not None
-            and recency_scale_seconds > 0
+        formula_query = _build_score_formula(
+            vertical_match_value=vertical_match_value,
+            vertical_boost_weight=vertical_boost_weight,
+            recency_boost_weight=recency_boost_weight,
+            recency_target_ts=recency_target_ts,
+            recency_scale_seconds=recency_scale_seconds,
         )
-        if use_recency_boost:
-            formula = models.SumExpression(
-                sum=[
-                    "$score",
-                    models.MultExpression(
-                        mult=[
-                            float(recency_boost_weight),
-                            models.LinDecayExpression(
-                                lin_decay=models.DecayParamsExpression(
-                                    x="published_ts",
-                                    target=float(recency_target_ts),
-                                    scale=float(recency_scale_seconds),
-                                    midpoint=0.5,
-                                )
-                            ),
-                        ]
-                    ),
-                ]
-            )
+        use_formula_boost = formula_query is not None
+        if use_formula_boost:
             resp = client.query_points(
                 collection_name=self.collection,
                 prefetch=[
@@ -302,7 +358,7 @@ class HybridVectorSearcher:
                         filter=id_filter,
                     )
                 ],
-                query=models.FormulaQuery(formula=formula),
+                query=formula_query,
                 limit=top_k,
                 with_payload=True,
             )
@@ -318,11 +374,12 @@ class HybridVectorSearcher:
         points = list(resp.points)
         scores = _extract_scores(points)
         logger.info(
-            "mmr=on diversity=%s top_k=%s candidates=%s recency_boost=%s results_count=%s scores=%s",
+            "mmr=on diversity=%s top_k=%s candidates=%s vertical_boost=%s recency_boost=%s results_count=%s scores=%s",
             diversity,
             top_k,
             len(candidate_ids),
-            "on" if use_recency_boost else "off",
+            "on" if vertical_boost_weight > 0.0 and vertical_match_value else "off",
+            "on" if recency_boost_weight > 0.0 else "off",
             len(points),
             [round(s, 6) for s in scores],
         )

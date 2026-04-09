@@ -1,35 +1,55 @@
-{% macro user(article_text) %}
-Given the article text, infer (1) the fashion vertical and (2) the language of the article.
+{% macro user(input_text, task="article") %}
+{% set is_article = task == "article" %}
+{% set is_user_prompt = task == "user_prompt" %}
 
+{% if is_article %}
+Given the article text, infer (1) the fashion vertical and (2) the language of the article.
+{% elif is_user_prompt %}
+Given the user's fashion-related prompt, infer (1) the target fashion vertical and (2) the language of the prompt.
+{% else %}
+Unsupported task: {{ task }}
+{% endif %}
+
+{% if is_article or is_user_prompt %}
 # Goal:
+{% if is_article %}
 Choose the most specific vertical you can justify from the text.
+{% else %}
+Infer who the prompt is most likely trying to retrieve or describe fashion examples for.
+Choose the most specific vertical justified by the prompt.
+{% endif %}
 
 # Vertical labels:
-- "mens": primarily about menswear or advice for men.
-- "womens": primarily about womenswear or advice for women.
-- "unisex": explicitly about both, or clearly gender-neutral coverage (industry, brands, culture) with no dominant gender focus.
-- "unknown": only if there is truly not enough signal in the text.
+- "mens": {% if is_article %}primarily about menswear or advice for men.{% else %}primarily requesting menswear, mens styling, or examples for men.{% endif %}
+- "womens": {% if is_article %}primarily about womenswear or advice for women.{% else %}primarily requesting womenswear, womens styling, or examples for women.{% endif %}
+- "unisex": {% if is_article %}explicitly about both, or clearly gender-neutral coverage (industry, brands, culture) with no dominant gender focus.{% else %}explicitly for both, or genuinely gender-neutral with no dominant target.{% endif %}
+- "unknown": only if there is truly not enough signal in the {% if is_article %}text{% else %}prompt{% endif %}.
 
 # Decision procedure (important):
 1) First, look for strong explicit signals.
-   - mens signals: "menswear", "men's", "for men", "male", "grooming", suits/tailoring advice aimed at men.
-   - womens signals: "womenswear", "women's", "for women", "female", dresses/skirts styling advice aimed at women.
+   - mens signals: {% if is_article %}"menswear", "men's", "for men", "male", "grooming", suits/tailoring advice aimed at men.{% else %}"menswear", "for men", "men's", "male", "guy", "boyfriend style", mens items or male-targeted styling terms.{% endif %}
+   - womens signals: {% if is_article %}"womenswear", "women's", "for women", "female", dresses/skirts styling advice aimed at women.{% else %}"womenswear", "for women", "women's", "female", "dress", "heels", female-targeted styling terms.{% endif %}
    If one side has clear explicit focus, choose it.
 
 2) If explicit signals are absent, look for dominant implicit framing.
-   - If the article repeatedly addresses a specific audience (e.g., "men should...", "women should...") or consistently uses gendered examples/models, choose that vertical.
+   - {% if is_article %}If the article repeatedly addresses a specific audience (e.g., "men should...", "women should...") or consistently uses gendered examples/models, choose that vertical.{% else %}If the prompt mentions items, silhouettes, styling references, or examples that strongly skew toward one side, choose that vertical.{% endif %}
 
 3) Use "unisex" ONLY when:
-   - the article explicitly discusses both mens and womens fashion, OR
-   - it is clearly about general fashion/industry/culture (e.g., luxury strategy, streetwear culture, sustainability, brand business) AND there is no dominant gender framing.
+   - {% if is_article %}the article explicitly discusses both mens and womens fashion, OR{% else %}the prompt explicitly asks for both mens and womens examples, OR{% endif %}
+   - {% if is_article %}it is clearly about general fashion/industry/culture (e.g., luxury strategy, streetwear culture, sustainability, brand business) AND there is no dominant gender framing.{% else %}it is clearly gender-neutral and there is no dominant target audience.{% endif %}
 
-4) Do NOT default to "unisex" just because the topic *could* apply to everyone.
-   If the article feels like it targets one side more than the other, pick "mens" or "womens".
+4) Do NOT default to "unisex" just because the {% if is_article %}topic *could* apply to everyone.{% else %}prompt is short or broad.{% endif %}
+   If the {% if is_article %}article feels{% else %}prompt implicitly leans{% endif %} toward one side {% if is_article %}more than the other{% endif %}, choose that side.
 
 # Language:
-Return the primary language of the provided text as a short code (e.g., "en", "ja"). If uncertain, return "unknown".
+Return the primary language of the provided {% if is_article %}text{% else %}prompt{% endif %} as a short code (e.g., "en", "ja"). If uncertain, return "unknown".
+{% if is_article %}
 Do not guess from the publisher name alone; use the content.
+{% else %}
+Use the content itself, not metadata.
+{% endif %}
 
-# Article text:
-{{article_text}}
+# {% if is_article %}Article text{% else %}User prompt{% endif %}:
+{{ input_text }}
+{% endif %}
 {% endmacro %}

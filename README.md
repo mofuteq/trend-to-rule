@@ -201,7 +201,7 @@ Typical example:
 GEMINI_API_KEY=your-gemini-api-key
 OPENAI_API_KEY=your-openai-compatible-api-key
 OPENAI_BASE_URL=http://localhost:11434/v1
-OPENAI_MODEL=gemma3:12b
+OPENAI_MODEL=gemma4:e4b
 OPENAI_REASONING_EFFORT=low
 
 VECTOR_QDRANT_URL=http://localhost:6333
@@ -212,7 +212,7 @@ VECTOR_DEVICE=auto
 VECTOR_CANDIDATE_K=50
 VECTOR_PER_QUERY_TOP_K=5
 VECTOR_MMR_DIVERSITY=0.3
-SEARXNG_BASE_URL=http://localhost:8080
+SEARXNG_BASE_URL=http://localhost:8008
 SEARXNG_IMAGE_LIMIT=5
 
 CHAT_DB_PATH=.data/chat_db
@@ -236,7 +236,7 @@ Notes:
 SearXNG JSON response example:
 
 ```bash
-curl "http://localhost:8080/search?q=silicon+valley+fashion&format=json"
+curl "http://localhost:8008/search?q=silicon+valley+fashion&format=json"
 ```
 
 ## Run Qdrant With Docker Compose
@@ -251,7 +251,7 @@ Services will be available at:
 
 - Streamlit app: `http://localhost:8501`
 - Qdrant: `http://localhost:6333`
-- SearXNG: `http://localhost:8080`
+- SearXNG: `http://localhost:8008`
 
 To stop it:
 
@@ -566,7 +566,7 @@ The architecture is intentionally model-agnostic. Lightweight models can be used
 ### OpenAI-Compatible Defaults
 
 - `OPENAI_BASE_URL`: `http://localhost:11434/v1`
-- `OPENAI_MODEL`: `gemma3:12b`
+- `OPENAI_MODEL`: `gemma4:e4b`
 - `OPENAI_REASONING_EFFORT`: `medium`
 
 `create()` also supports the following runtime parameters (with defaults):

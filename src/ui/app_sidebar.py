@@ -1,9 +1,11 @@
 from datetime import datetime, timezone
+import inspect
 from pathlib import Path
 
 import streamlit as st
 
 from storage.chat_db import ChatDB
+from ui.app_state import sort_chat_ids_by_last_updated
 
 try:
     from retrieval.search_vectors import HybridVectorSearcher
@@ -21,22 +23,10 @@ def setup_chat_selector(
     if st.session_state.chat_id and st.session_state.chat_id not in ids:
         ids.insert(0, st.session_state.chat_id)
 
-    updated_at_by_chat: dict[str, float] = {}
-    title_by_chat: dict[str, str] = {}
-    for chat_id in ids:
-        updated_at = 0.0
-        meta = chat_db.get(key=chat_id, db_name=chat_meta_db_name)
-        if isinstance(meta, dict):
-            updated_at_ts = meta.get("updated_at_ts")
-            if isinstance(updated_at_ts, (int, float)):
-                updated_at = float(updated_at_ts)
-            title_by_chat[chat_id] = str(meta.get("title") or "").strip()
-        updated_at_by_chat[chat_id] = updated_at
-
-    sorted_chat_ids = sorted(
-        ids,
-        key=lambda chat_id: updated_at_by_chat.get(chat_id, 0.0),
-        reverse=True,
+    sorted_chat_ids, updated_at_by_chat, title_by_chat = sort_chat_ids_by_last_updated(
+        chat_ids=ids,
+        chat_db=chat_db,
+        chat_meta_db_name=chat_meta_db_name,
     )
     if not sorted_chat_ids:
         st.sidebar.caption("No chat history yet.")
@@ -76,7 +66,17 @@ def setup_vector_search_ui(
         st.sidebar.error(st.session_state.vector_error)
         return
 
-    if st.session_state.vector_searcher is None:
+    needs_reinit = st.session_state.vector_searcher is None
+    if not needs_reinit and st.session_state.vector_searcher is not None:
+        try:
+            signature = inspect.signature(
+                st.session_state.vector_searcher.hybrid_search_with_filter
+            )
+            needs_reinit = "vertical_match_value" not in signature.parameters
+        except (TypeError, ValueError, AttributeError):
+            needs_reinit = True
+
+    if needs_reinit:
         try:
             st.session_state.vector_searcher = HybridVectorSearcher(
                 model_name=vector_model_name,

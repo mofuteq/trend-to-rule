@@ -20,9 +20,9 @@ from FlagEmbedding import BGEM3FlagModel
 SRC_DIR = Path(__file__).resolve().parents[1]
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
-    from services.chat import infer_article_attribute
+    from services.chat import infer_attribute
 else:
-    from services.chat import infer_article_attribute
+    from services.chat import infer_attribute
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / ".data"
@@ -106,7 +106,7 @@ def iter_lmdb(path: Path):
     env = lmdb.open(
         str(path),
         readonly=True,
-        lock=False,
+        lock=True,
         readahead=False,
         subdir=True,
         map_size=LMDB_MAP_SIZE,
@@ -359,11 +359,11 @@ def build_chunk_records(record: dict[str, Any], infer_attribute: bool = True) ->
     language = ""
     if infer_attribute:
         try:
-            article_attribute = infer_article_attribute(article_text=body)
+            article_attribute = infer_attribute(article_text=body)
             vertical = str(article_attribute.vertical)
             language = str(article_attribute.language)
         except Exception as err:
-            logger.warning("infer_article_attribute failed: %s", err)
+            logger.warning("infer_attribute failed: %s", err)
 
     sections = split_by_h2(body)
     if not sections:

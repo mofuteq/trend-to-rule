@@ -23,6 +23,33 @@ from services.image_search import ImageSearchResult, search_images
 logger = logging.getLogger(__name__)
 
 
+def _build_fallback_image_query(user_needs: UserNeeds, rule: str) -> str:
+    """Build a safe fallback image query when structured rendering fails.
+
+    Args:
+        user_needs: Structured user-needs object.
+        rule: Final synthesized assistant rule.
+
+    Returns:
+        str: A conservative image-search query string.
+    """
+    vertical = str(getattr(user_needs, "vertical", "") or "").strip().lower()
+    if vertical == "mens":
+        prefix = "menswear"
+    elif vertical == "womens":
+        prefix = "womenswear"
+    elif vertical == "unisex":
+        prefix = "unisex fashion"
+    else:
+        prefix = "fashion outfit"
+
+    rule_hint = normalize_text_nfkc(rule or "").strip()
+    if rule_hint:
+        rule_hint = " ".join(rule_hint.split())
+        return f"{prefix} {rule_hint}"
+    return prefix
+
+
 @dataclass(slots=True)
 class RetrievalBundle:
     """Retrieved vector-search outputs used downstream by the chat workflow."""
@@ -62,6 +89,7 @@ def retrieve_supporting_context(
     retrieved = retrieve_vector_results_by_queries(
         canonical_query=str(candidate_queries.canonical_query or ""),
         emerging_query=str(candidate_queries.emerging_query or ""),
+        user_vertical=user_needs.vertical,
         vector_candidate_k=config.vector_candidate_k,
         mmr_diversity=config.vector_mmr_diversity,
         per_query_top_k=config.vector_per_query_top_k,
@@ -120,7 +148,19 @@ def generate_assistant_response(
         user_goal=user_needs.user_goal,
         rule=rule,
     )
-    image_query = render_example_query(query_spec)
+    try:
+        image_query = render_example_query(query_spec)
+    except ValueError as err:
+        image_query = _build_fallback_image_query(
+            user_needs=user_needs,
+            rule=rule,
+        )
+        logger.warning(
+            "render_example_query failed: %s; fallback_image_query=%s query_spec=%s",
+            err,
+            image_query,
+            query_spec.model_dump(),
+        )
 
     image_results: list[ImageSearchResult] = []
     try:
