@@ -125,15 +125,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
- │ operat │ operat │            │ just   │ repair │
-│ 4b9f-9e2f-         │  │ or     │ or.    │            │ now    │        │
-│ 4f20326b31d5       │  │        │ admin, │            │        │        │
-│                    │  │        │ operat │            │        │        │
-│                    │  │        │ or.    │            │        │        │
-│                    │  │        │ read,  │            │        │        │
-│                    │  │        │ operat │            │        │        │
-│                    │  │        │ or.    │            │        │        │
-│                    │  │        │ write, │            │        │        │
-│                    │  │        │ operat │            │        │        │
-│                    │ 
