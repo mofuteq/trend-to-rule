@@ -14,16 +14,16 @@ x-langfuse-env: &langfuse-env
   REDIS_AUTH: ${LANGFUSE_REDIS_AUTH:-redis}
   LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
   LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
-  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ROOT_USER:-minio}
-  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_ROOT_PASSWORD:-miniosecret}
-  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_S3_ACCESS_KEY_ID:-langfuse}
+  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_S3_SECRET_ACCESS_KEY:-langfusesecret}
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-seaweedfs:8333
   LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
   LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
   LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
   LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
-  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ROOT_USER:-minio}
-  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_ROOT_PASSWORD:-miniosecret}
-  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_S3_ACCESS_KEY_ID:-langfuse}
+  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_S3_SECRET_ACCESS_KEY:-langfusesecret}
+  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://langfuse-seaweedfs:8333
   LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
   LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
 
@@ -80,8 +80,8 @@ services:
         condition: service_healthy
       langfuse-redis:
         condition: service_healthy
-      langfuse-minio:
-        condition: service_healthy
+      langfuse-seaweedfs-init:
+        condition: service_completed_successfully
     environment:
       <<: *langfuse-env
       NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3000}
@@ -109,8 +109,8 @@ services:
         condition: service_healthy
       langfuse-redis:
         condition: service_healthy
-      langfuse-minio:
-        condition: service_healthy
+      langfuse-seaweedfs-init:
+        condition: service_completed_successfully
     environment:
       <<: *langfuse-env
     restart: unless-stopped
@@ -163,23 +163,55 @@ services:
       - langfuse_redis_data:/data
     restart: unless-stopped
 
-  langfuse-minio:
-    image: minio/minio:latest
-    container_name: trend-to-rule-langfuse-minio
-    entrypoint: sh
-    command: >
-      -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
-    environment:
-      MINIO_ROOT_USER: ${LANGFUSE_MINIO_ROOT_USER:-minio}
-      MINIO_ROOT_PASSWORD: ${LANGFUSE_MINIO_ROOT_PASSWORD:-miniosecret}
+  langfuse-seaweedfs:
+    image: chrislusf/seaweedfs:4.20
+    container_name: trend-to-rule-langfuse-seaweedfs
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        mkdir -p /etc/seaweedfs
+        cat > /etc/seaweedfs/s3config.json <<'EOF'
+        {
+          "identities": [
+            {
+              "name": "langfuse",
+              "credentials": [
+                {
+                  "accessKey": "${LANGFUSE_S3_ACCESS_KEY_ID:-langfuse}",
+                  "secretKey": "${LANGFUSE_S3_SECRET_ACCESS_KEY:-langfusesecret}"
+                }
+              ],
+              "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+            }
+          ]
+        }
+        EOF
+        exec weed server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3config.json
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/ready"]
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8333"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 30
     volumes:
-      - langfuse_minio_data:/data
+      - langfuse_seaweedfs_data:/data
     restart: unless-stopped
+
+  langfuse-seaweedfs-init:
+    image: amazon/aws-cli:2.17.0
+    container_name: trend-to-rule-langfuse-seaweedfs-init
+    depends_on:
+      langfuse-seaweedfs:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: ${LANGFUSE_S3_ACCESS_KEY_ID:-langfuse}
+      AWS_SECRET_ACCESS_KEY: ${LANGFUSE_S3_SECRET_ACCESS_KEY:-langfusesecret}
+      AWS_DEFAULT_REGION: auto
+    entrypoint: /bin/sh
+    command: >
+      -c "aws --endpoint-url http://langfuse-seaweedfs:8333 s3api create-bucket
+      --bucket langfuse 2>/dev/null || true"
+    restart: "no"
 
 volumes:
   qdrant_data:
@@ -187,4 +219,4 @@ volumes:
   langfuse_clickhouse_data:
   langfuse_clickhouse_logs:
   langfuse_redis_data:
-  langfuse_minio_data:
+  langfuse_seaweedfs_data:

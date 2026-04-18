@@ -277,7 +277,7 @@ Compose details:
 - Local runtime data is mounted from `.data/` into the container at `/app/.data`.
 - Environment variables are loaded from `src/.env` via `env_file`.
 
-Qdrant storage remains persisted in the Docker volume `qdrant_data`. Langfuse state persists in the volumes `langfuse_postgres_data`, `langfuse_clickhouse_data`, `langfuse_clickhouse_logs`, `langfuse_redis_data`, and `langfuse_minio_data`.
+Qdrant storage remains persisted in the Docker volume `qdrant_data`. Langfuse state persists in the volumes `langfuse_postgres_data`, `langfuse_clickhouse_data`, `langfuse_clickhouse_logs`, `langfuse_redis_data`, and `langfuse_seaweedfs_data`.
 
 ### Self-hosted Langfuse stack
 
@@ -290,7 +290,8 @@ The bundled Compose adds a self-hosted Langfuse deployment next to the app:
 | `langfuse-postgres` | `postgres:17` | Metadata store |
 | `langfuse-clickhouse` | `clickhouse/clickhouse-server:24.8` | Traces/observations store |
 | `langfuse-redis` | `redis:7` | Queue + cache |
-| `langfuse-minio` | `minio/minio` | S3-compatible event/media store |
+| `langfuse-seaweedfs` | `chrislusf/seaweedfs:4.20` | S3-compatible event/media store (master + volume + filer + S3 gateway in one process) |
+| `langfuse-seaweedfs-init` | `amazon/aws-cli:2.17.0` | One-shot sidecar that creates the `langfuse` bucket once SeaweedFS is healthy |
 
 Bootstrap workflow:
 
@@ -315,8 +316,8 @@ LANGFUSE_ENCRYPTION_KEY=<openssl rand -hex 32>
 LANGFUSE_POSTGRES_PASSWORD=postgres
 LANGFUSE_CLICKHOUSE_PASSWORD=clickhouse
 LANGFUSE_REDIS_AUTH=redis
-LANGFUSE_MINIO_ROOT_USER=minio
-LANGFUSE_MINIO_ROOT_PASSWORD=miniosecret
+LANGFUSE_S3_ACCESS_KEY_ID=langfuse
+LANGFUSE_S3_SECRET_ACCESS_KEY=langfusesecret
 
 # Optional: pre-provision an org/project/user on first boot
 # LANGFUSE_INIT_ORG_ID=trend-to-rule
@@ -337,6 +338,8 @@ openssl rand -hex 32
 ```
 
 The Langfuse services join the default Compose network along with `app`, `qdrant`, and `searxng`, so service names such as `http://langfuse-web:3000` resolve automatically inside containers.
+
+SeaweedFS is started in all-in-one `server -s3` mode (master, volume, filer, and S3 gateway in one process). Credentials are generated into `/etc/seaweedfs/s3config.json` at container start from `LANGFUSE_S3_ACCESS_KEY_ID` / `LANGFUSE_S3_SECRET_ACCESS_KEY`. The `langfuse-seaweedfs-init` sidecar then creates the `langfuse` bucket via the AWS CLI; `langfuse-web` and `langfuse-worker` wait for that sidecar to complete successfully before starting, so event uploads have a writable bucket from the first request.
 
 ---
 
