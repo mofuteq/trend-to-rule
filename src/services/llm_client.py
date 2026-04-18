@@ -22,6 +22,7 @@ from openai import OpenAI
 from pydantic import BaseModel
 
 from core.text_utils import normalize_text_nfkc
+from services import tracing
 
 try:
     import json5
@@ -151,6 +152,7 @@ def create(
     )
 
 
+@tracing.observe(as_type="generation", name="gemini_generation")
 def _create_with_gemini(
     *,
     user_prompt: str,
@@ -227,9 +229,80 @@ def _create_with_gemini(
         response_model.__name__ if response_model is not None else None,
     )
 
+    _update_gemini_generation(
+        model=selected_model,
+        user_prompt=user_prompt,
+        system_prompt=system_prompt,
+        response=res,
+        temperature=temperature,
+        top_p=top_p,
+        seed=seed,
+        reasoning_effort=reasoning_effort,
+        response_model=response_model,
+    )
+
     if response_model:
         res = response_model.model_validate(res.parsed)
     return res
+
+
+def _extract_gemini_usage(response: GenerateContentResponse) -> dict[str, int] | None:
+    """Extract token usage details from a Gemini response."""
+    usage = getattr(response, "usage_metadata", None)
+    if usage is None:
+        return None
+    input_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
+    output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0)
+    total_tokens = int(
+        getattr(usage, "total_token_count", 0)
+        or (input_tokens + output_tokens)
+    )
+    if not (input_tokens or output_tokens or total_tokens):
+        return None
+    return {
+        "input": input_tokens,
+        "output": output_tokens,
+        "total": total_tokens,
+    }
+
+
+def _update_gemini_generation(
+    *,
+    model: str,
+    user_prompt: str,
+    system_prompt: str | None,
+    response: GenerateContentResponse,
+    temperature: float,
+    top_p: float,
+    seed: int,
+    reasoning_effort: str,
+    response_model: type[ModelT] | None,
+) -> None:
+    """Push input/output/usage info into the active Langfuse generation."""
+    if not tracing.is_enabled():
+        return
+    output_text: str = ""
+    try:
+        output_text = str(getattr(response, "text", "") or "")
+    except Exception:
+        output_text = ""
+    update_kwargs: dict[str, Any] = {
+        "model": model,
+        "input": {"user_prompt": user_prompt, "system_prompt": system_prompt},
+        "output": output_text,
+        "metadata": {
+            "backend": "gemini",
+            "temperature": temperature,
+            "top_p": top_p,
+            "seed": seed,
+            "reasoning_effort": reasoning_effort,
+            "response_model": response_model.__name__ if response_model else None,
+        },
+    }
+    usage = _extract_gemini_usage(response)
+    if usage is not None:
+        update_kwargs["usage_details"] = usage
+    tracing.update_current_generation(**update_kwargs)
 
 
 def _content_to_text(content: Content) -> str:
@@ -360,6 +433,7 @@ def _chat_create_with_reasoning_fallback(
         )
 
 
+@tracing.observe(as_type="generation", name="openai_generation")
 def _create_with_openai(
     *,
     user_prompt: str,
@@ -392,6 +466,15 @@ def _create_with_openai(
             messages.append({"role": role, "content": text})
     messages.append({"role": "user", "content": user_prompt})
 
+    trace_metadata: dict[str, Any] = {
+        "backend": "openai",
+        "temperature": temperature,
+        "top_p": top_p,
+        "seed": seed,
+        "reasoning_effort": reasoning_effort,
+        "response_model": response_model.__name__ if response_model else None,
+    }
+
     if response_model:
         json_retry_messages = list(messages)
         json_retry_messages.append(
@@ -421,6 +504,13 @@ def _create_with_openai(
                     model,
                     response_model.__name__,
                 )
+                _update_openai_generation(
+                    model=model,
+                    messages=messages,
+                    response=parsed_resp,
+                    output=parsed,
+                    metadata={**trace_metadata, "parse_mode": "parse"},
+                )
                 return parsed
             retry_resp = _chat_create_with_reasoning_fallback(
                 client,
@@ -439,7 +529,15 @@ def _create_with_openai(
                     model,
                     response_model.__name__,
                 )
-                return _validate_response_model_from_text(response_model, retry_text)
+                validated = _validate_response_model_from_text(response_model, retry_text)
+                _update_openai_generation(
+                    model=model,
+                    messages=json_retry_messages,
+                    response=retry_resp,
+                    output=retry_text,
+                    metadata={**trace_metadata, "parse_mode": "json_retry"},
+                )
+                return validated
         except Exception:
             pass
 
@@ -461,17 +559,89 @@ def _create_with_openai(
                 model,
                 response_model.__name__,
             )
-            return _validate_response_model_from_text(response_model, text)
+            validated = _validate_response_model_from_text(response_model, text)
+            _update_openai_generation(
+                model=model,
+                messages=messages,
+                response=resp,
+                output=text,
+                metadata={**trace_metadata, "parse_mode": "text_validate"},
+            )
+            return validated
         except Exception:
             logger.info(
                 "llm_response backend=openai model=%s response_model=%s parse_mode=json_loads",
                 model,
                 response_model.__name__,
             )
-            return response_model.model_validate(json.loads(text))
+            validated = response_model.model_validate(json.loads(text))
+            _update_openai_generation(
+                model=model,
+                messages=messages,
+                response=resp,
+                output=text,
+                metadata={**trace_metadata, "parse_mode": "json_loads"},
+            )
+            return validated
     logger.info(
         "llm_response backend=openai model=%s response_model=%s",
         model,
         None,
     )
+    _update_openai_generation(
+        model=model,
+        messages=messages,
+        response=resp,
+        output=text,
+        metadata=trace_metadata,
+    )
     return SimpleNamespace(text=text, raw=resp)
+
+
+def _extract_openai_usage(response: Any) -> dict[str, int] | None:
+    """Extract token usage details from an OpenAI-compatible response."""
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+    input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+    output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+    total_tokens = int(
+        getattr(usage, "total_tokens", 0)
+        or (input_tokens + output_tokens)
+    )
+    if not (input_tokens or output_tokens or total_tokens):
+        return None
+    return {
+        "input": input_tokens,
+        "output": output_tokens,
+        "total": total_tokens,
+    }
+
+
+def _update_openai_generation(
+    *,
+    model: str,
+    messages: list[dict[str, str]],
+    response: Any,
+    output: Any,
+    metadata: dict[str, Any],
+) -> None:
+    """Push input/output/usage info into the active Langfuse generation."""
+    if not tracing.is_enabled():
+        return
+    output_value: Any = output
+    if hasattr(output, "model_dump"):
+        try:
+            output_value = output.model_dump()
+        except Exception:
+            output_value = str(output)
+    update_kwargs: dict[str, Any] = {
+        "model": model,
+        "input": messages,
+        "output": output_value,
+        "metadata": metadata,
+    }
+    usage = _extract_openai_usage(response)
+    if usage is not None:
+        update_kwargs["usage_details"] = usage
+    tracing.update_current_generation(**update_kwargs)

@@ -217,6 +217,10 @@ SEARXNG_IMAGE_LIMIT=5
 
 CHAT_DB_PATH=.data/chat_db
 APP_LOG_LEVEL=INFO
+
+LANGFUSE_PUBLIC_KEY=
+LANGFUSE_SECRET_KEY=
+LANGFUSE_HOST=http://langfuse-web:3000
 ```
 
 Notes:
@@ -232,6 +236,8 @@ Notes:
 - `SEARXNG_IMAGE_LIMIT`: Maximum number of deduplicated image results rendered by the app.
 - `CHAT_DB_PATH`: LMDB path for chat history and session metadata.
 - `APP_LOG_LEVEL`: Application log level such as `INFO` or `DEBUG`.
+- `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`: Enable Langfuse tracing when both are set. Leave empty to disable observability.
+- `LANGFUSE_HOST`: Langfuse endpoint. Defaults to `https://cloud.langfuse.com`; set to `http://langfuse-web:3000` for the self-hosted stack bundled in `docker-compose.yml`, or your own self-hosted URL.
 
 SearXNG JSON response example:
 
@@ -252,6 +258,7 @@ Services will be available at:
 - Streamlit app: `http://localhost:8501`
 - Qdrant: `http://localhost:6333`
 - SearXNG: `http://localhost:8008`
+- Langfuse UI: `http://localhost:3000`
 
 To stop it:
 
@@ -265,11 +272,71 @@ Compose details:
 - The app is started with `uv run streamlit run src/app.py`.
 - The app connects to Qdrant over the Compose network using `http://qdrant:6333`.
 - The app can reach SearXNG over the Compose network using `http://searxng:8080`.
+- The app reaches Langfuse over the Compose network using `http://langfuse-web:3000` (injected as `LANGFUSE_HOST`).
 - SearXNG is configured via [`searxng/settings.yml`](./searxng/settings.yml), allows `format=json` responses, and uses a non-default `server.secret_key`.
 - Local runtime data is mounted from `.data/` into the container at `/app/.data`.
 - Environment variables are loaded from `src/.env` via `env_file`.
 
-Qdrant storage remains persisted in the Docker volume `qdrant_data`.
+Qdrant storage remains persisted in the Docker volume `qdrant_data`. Langfuse state persists in the volumes `langfuse_postgres_data`, `langfuse_clickhouse_data`, `langfuse_clickhouse_logs`, `langfuse_redis_data`, and `langfuse_minio_data`.
+
+### Self-hosted Langfuse stack
+
+The bundled Compose adds a self-hosted Langfuse deployment next to the app:
+
+| Service | Image | Purpose |
+| --- | --- | --- |
+| `langfuse-web` | `langfuse/langfuse:3` | UI + ingestion API (port `3000`) |
+| `langfuse-worker` | `langfuse/langfuse-worker:3` | Async ingestion worker |
+| `langfuse-postgres` | `postgres:17` | Metadata store |
+| `langfuse-clickhouse` | `clickhouse/clickhouse-server:24.8` | Traces/observations store |
+| `langfuse-redis` | `redis:7` | Queue + cache |
+| `langfuse-minio` | `minio/minio` | S3-compatible event/media store |
+
+Bootstrap workflow:
+
+1. Start the stack with `docker compose up -d` and open `http://localhost:3000`.
+2. Create an account, an organization, and a project through the Langfuse UI, or pre-provision them via `LANGFUSE_INIT_*` variables (see below).
+3. Copy the generated `Public Key` and `Secret Key` from the project settings.
+4. Add them to `src/.env` as `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`, then restart the `app` service so the new keys are picked up.
+
+Recommended `src/.env` entries when using the bundled stack:
+
+```dotenv
+# Langfuse client (read by the Streamlit app)
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_HOST=http://langfuse-web:3000
+
+# Langfuse server secrets (change these in any non-local deployment)
+LANGFUSE_NEXTAUTH_URL=http://localhost:3000
+LANGFUSE_NEXTAUTH_SECRET=replace-with-long-random-string
+LANGFUSE_SALT=replace-with-long-random-string
+LANGFUSE_ENCRYPTION_KEY=<openssl rand -hex 32>
+LANGFUSE_POSTGRES_PASSWORD=postgres
+LANGFUSE_CLICKHOUSE_PASSWORD=clickhouse
+LANGFUSE_REDIS_AUTH=redis
+LANGFUSE_MINIO_ROOT_USER=minio
+LANGFUSE_MINIO_ROOT_PASSWORD=miniosecret
+
+# Optional: pre-provision an org/project/user on first boot
+# LANGFUSE_INIT_ORG_ID=trend-to-rule
+# LANGFUSE_INIT_ORG_NAME=trend-to-rule
+# LANGFUSE_INIT_PROJECT_ID=trend-to-rule
+# LANGFUSE_INIT_PROJECT_NAME=trend-to-rule
+# LANGFUSE_INIT_PROJECT_PUBLIC_KEY=pk-lf-local-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# LANGFUSE_INIT_PROJECT_SECRET_KEY=sk-lf-local-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# LANGFUSE_INIT_USER_EMAIL=admin@example.com
+# LANGFUSE_INIT_USER_NAME=Admin
+# LANGFUSE_INIT_USER_PASSWORD=change-me
+```
+
+Generate a 32-byte hex encryption key with:
+
+```bash
+openssl rand -hex 32
+```
+
+The Langfuse services join the default Compose network along with `app`, `qdrant`, and `searxng`, so service names such as `http://langfuse-web:3000` resolve automatically inside containers.
 
 ---
 
@@ -581,6 +648,31 @@ The architecture is intentionally model-agnostic. Lightweight models can be used
 
 If a model returns HTTP 400 because it does not support `reasoning_effort`, the request is automatically retried without `reasoning_effort`.  
 That model is then cached in-process as unsupported, so subsequent calls skip `reasoning_effort` from the first attempt.
+
+---
+
+## Observability with Langfuse
+
+LLM calls and pipeline stages are optionally traced via [Langfuse](https://langfuse.com/).
+
+Tracing activates automatically when both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are present in `src/.env`. When either key is missing, tracing is a no-op and no network calls are made.
+
+Each Streamlit chat turn is captured as a single trace named `chat_turn`, tagged with the anonymous user id and chat session id. Nested spans include:
+
+- `analyze_user_needs`, `generate_search_query`, `infer_attribute`
+- `retrieve_supporting_context` (hybrid vector search)
+- `extract_claims`, `extract_structured_draft`, `generate_decision_support`, `generate_query`
+- `generate_chat_title`
+
+LLM calls in `services/llm_client.py` are recorded as `generation` spans and carry:
+
+- model name (Gemini or OpenAI-compatible)
+- input messages / prompts
+- output text (or parsed Pydantic structure)
+- token usage (`input`, `output`, `total`)
+- sampling config (`temperature`, `top_p`, `seed`, `reasoning_effort`)
+
+The implementation lives in `src/services/tracing.py` and is intentionally thin: it wraps `@observe`, `update_current_generation`, `update_current_trace`, and `flush`, gracefully degrading when Langfuse is not configured.
 
 ---
 

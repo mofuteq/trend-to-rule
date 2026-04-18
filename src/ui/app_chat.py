@@ -5,6 +5,7 @@ import streamlit as st
 from core.app_config import AppConfig
 from core.text_utils import normalize_text_nfkc
 from retrieval.app_retrieval import build_retrieved_results_html_table
+from services import tracing
 from services.chat import analyze_user_needs, generate_chat_title
 from services.chat_workflow import (
     RetrievalBundle,
@@ -105,6 +106,7 @@ def stream_markdown_text(text: str) -> None:
         placeholder.markdown(buf)
 
 
+@tracing.observe(name="chat_turn")
 def process_user_prompt(
     user_prompt: str,
     *,
@@ -123,6 +125,12 @@ def process_user_prompt(
         config: App runtime config.
     """
     normalized_prompt = normalize_text_nfkc(user_prompt)
+    tracing.update_current_trace(
+        user_id=user_id,
+        session_id=st.session_state.chat_id,
+        input=normalized_prompt,
+        tags=["trend-to-rule", "chat_turn"],
+    )
 
     add_message(
         role="user",
@@ -205,6 +213,9 @@ def process_user_prompt(
         user_chat_ids.append(st.session_state.chat_id)
         chat_db.put(key=user_id, value=user_chat_ids,
                     db_name=config.user_db_name)
+
+    tracing.update_current_trace(output=assistant_response.rule)
+    tracing.flush()
 
 
 def render_chat_input(
