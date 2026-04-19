@@ -9,9 +9,9 @@ x-langfuse-env: &langfuse-env
   CLICKHOUSE_USER: clickhouse
   CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-clickhouse}
   CLICKHOUSE_CLUSTER_ENABLED: "false"
-  REDIS_HOST: langfuse-redis
+  REDIS_HOST: langfuse-valkey
   REDIS_PORT: "6379"
-  REDIS_AUTH: ${LANGFUSE_REDIS_AUTH:-redis}
+  REDIS_AUTH: ${LANGFUSE_VALKEY_AUTH:-valkey}
   LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
   LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
   LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_S3_ACCESS_KEY_ID:-langfuse}
@@ -42,7 +42,7 @@ services:
         condition: service_healthy
       langfuse-clickhouse:
         condition: service_healthy
-      langfuse-redis:
+      langfuse-valkey:
         condition: service_healthy
       langfuse-seaweedfs-init:
         condition: service_completed_successfully
@@ -71,7 +71,7 @@ services:
         condition: service_healthy
       langfuse-clickhouse:
         condition: service_healthy
-      langfuse-redis:
+      langfuse-valkey:
         condition: service_healthy
       langfuse-seaweedfs-init:
         condition: service_completed_successfully
@@ -113,18 +113,18 @@ services:
       - langfuse_clickhouse_logs:/var/log/clickhouse-server
     restart: unless-stopped
 
-  langfuse-redis:
-    image: redis:7
-    container_name: trend-to-rule-langfuse-redis
+  langfuse-valkey:
+    image: valkey/valkey:8
+    container_name: trend-to-rule-langfuse-valkey
     command: >
-      --requirepass ${LANGFUSE_REDIS_AUTH:-redis}
+      --requirepass ${LANGFUSE_VALKEY_AUTH:-valkey}
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${LANGFUSE_REDIS_AUTH:-redis}", "ping"]
+      test: ["CMD", "valkey-cli", "-a", "${LANGFUSE_VALKEY_AUTH:-valkey}", "ping"]
       interval: 5s
       timeout: 5s
       retries: 10
     volumes:
-      - langfuse_redis_data:/data
+      - langfuse_valkey_data:/data
     restart: unless-stopped
 
   langfuse-seaweedfs:
@@ -181,5 +181,5 @@ volumes:
   langfuse_postgres_data:
   langfuse_clickhouse_data:
   langfuse_clickhouse_logs:
-  langfuse_redis_data:
+  langfuse_valkey_data:
   langfuse_seaweedfs_data:

@@ -53,7 +53,7 @@ container reaches Langfuse over the Compose network automatically.
 | `langfuse-worker` | `langfuse/langfuse-worker:3` | Async ingestion worker |
 | `langfuse-postgres` | `postgres:17` | Metadata store |
 | `langfuse-clickhouse` | `clickhouse/clickhouse-server:24.8` | Traces / observations store |
-| `langfuse-redis` | `redis:7` | Queue + cache |
+| `langfuse-valkey` | `valkey/valkey:8` | Queue + cache (Redis-protocol-compatible) |
 | `langfuse-seaweedfs` | `chrislusf/seaweedfs:4.20` | S3-compatible event/media store (master + volume + filer + S3 gateway in one process) |
 | `langfuse-seaweedfs-init` | `amazon/aws-cli:2.17.0` | One-shot sidecar that creates the `langfuse` bucket once SeaweedFS is healthy |
 
@@ -81,7 +81,7 @@ LANGFUSE_SALT=replace-with-long-random-string
 LANGFUSE_ENCRYPTION_KEY=<openssl rand -hex 32>
 LANGFUSE_POSTGRES_PASSWORD=postgres
 LANGFUSE_CLICKHOUSE_PASSWORD=clickhouse
-LANGFUSE_REDIS_AUTH=redis
+LANGFUSE_VALKEY_AUTH=valkey
 LANGFUSE_S3_ACCESS_KEY_ID=langfuse
 LANGFUSE_S3_SECRET_ACCESS_KEY=langfusesecret
 
@@ -111,7 +111,7 @@ the overlay:
 - `langfuse_postgres_data`
 - `langfuse_clickhouse_data`
 - `langfuse_clickhouse_logs`
-- `langfuse_redis_data`
+- `langfuse_valkey_data`
 - `langfuse_seaweedfs_data`
 
 ## SeaweedFS notes
