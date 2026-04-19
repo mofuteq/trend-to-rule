@@ -220,7 +220,22 @@ def process_user_prompt(
                     db_name=config.user_db_name)
 
     tracing.update_current_trace(
-        output=assistant_response.rule,
+        output={
+            "rule": assistant_response.rule,
+            "user_goal": user_needs.user_goal,
+            "vertical": user_needs.vertical,
+            "candidate_queries": user_needs.candidate_queries.model_dump(),
+            "structured_claims": assistant_response.structured_claims.model_dump(),
+            "structured_draft": assistant_response.structured_draft.model_dump(),
+            "image_query": assistant_response.image_query,
+            "image_results": [
+                item.model_dump() for item in assistant_response.image_results
+            ],
+            "retrieval": {
+                "canonical_rows": retrieval.canonical_rows,
+                "emerging_rows": retrieval.emerging_rows,
+            },
+        },
         tags=[
             "trend-to-rule",
             "chat_turn",
@@ -234,6 +249,12 @@ def process_user_prompt(
             "image_result_count": len(assistant_response.image_results),
             "canonical_hits": len(retrieval.canonical_rows),
             "emerging_hits": len(retrieval.emerging_rows),
+            "canonical_claim_count": len(
+                assistant_response.structured_claims.canonical_claims
+            ),
+            "emerging_claim_count": len(
+                assistant_response.structured_claims.emerging_claims
+            ),
         },
     )
 
