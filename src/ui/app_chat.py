@@ -18,6 +18,7 @@ from ui.app_state import add_message, get_chat_meta, set_chat_title
 
 logger = logging.getLogger(__name__)
 ASSISTANT_AVATAR = ":material/auto_awesome:"
+WORKFLOW_VERSION = "v1"
 
 
 def render_history() -> None:
@@ -129,7 +130,11 @@ def process_user_prompt(
         user_id=user_id,
         session_id=st.session_state.chat_id,
         input=normalized_prompt,
-        tags=["trend-to-rule", "chat_turn"],
+        tags=["trend-to-rule", "chat_turn", f"workflow:{WORKFLOW_VERSION}"],
+        metadata={
+            "chat_id": st.session_state.chat_id,
+            "workflow_version": WORKFLOW_VERSION,
+        },
     )
 
     add_message(
@@ -214,8 +219,23 @@ def process_user_prompt(
         chat_db.put(key=user_id, value=user_chat_ids,
                     db_name=config.user_db_name)
 
-    tracing.update_current_trace(output=assistant_response.rule)
-    tracing.flush()
+    tracing.update_current_trace(
+        output=assistant_response.rule,
+        tags=[
+            "trend-to-rule",
+            "chat_turn",
+            f"workflow:{WORKFLOW_VERSION}",
+            f"vertical:{user_needs.vertical}",
+        ],
+        metadata={
+            "user_goal": user_needs.user_goal,
+            "vertical": user_needs.vertical,
+            "image_query": assistant_response.image_query,
+            "image_result_count": len(assistant_response.image_results),
+            "canonical_hits": len(retrieval.canonical_rows),
+            "emerging_hits": len(retrieval.emerging_rows),
+        },
+    )
 
 
 def render_chat_input(

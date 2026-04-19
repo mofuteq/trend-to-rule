@@ -3,28 +3,23 @@
 Provides `observe`, `update_current_generation`, `update_current_trace`, and
 `flush`, which become no-ops when Langfuse credentials are not configured.
 
-Credentials are read from environment variables (`src/.env`):
+Credentials are read from environment variables:
 - `LANGFUSE_PUBLIC_KEY`
 - `LANGFUSE_SECRET_KEY`
 - `LANGFUSE_HOST` (default: https://cloud.langfuse.com)
+
+This module only reads `os.environ`; loading `.env` is the responsibility of
+the application entry points (`core.app_config`, `services.llm_client`, and
+the pipeline scripts).
 """
 
 import logging
 import os
-from pathlib import Path
 from typing import Any, Callable, TypeVar
-
-from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Any])
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SRC_ROOT = Path(__file__).resolve().parents[1]
-for env_path in (SRC_ROOT / ".env", Path(".env"), PROJECT_ROOT / ".env"):
-    if env_path.is_file():
-        load_dotenv(env_path)
 
 _ENABLED: bool | None = None
 _CLIENT: Any = None
