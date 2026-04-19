@@ -25,7 +25,7 @@ services:
     ports:
       - "6333:6333"
     volumes:
-      - qdrant_data:/qdrant/storage
+      - ./.data/qdrant:/qdrant/storage
     restart: unless-stopped
 
   searxng:
@@ -38,6 +38,3 @@ services:
     volumes:
       - ./searxng:/etc/searxng:rw
     restart: unless-stopped
-
-volumes:
-  qdrant_data:

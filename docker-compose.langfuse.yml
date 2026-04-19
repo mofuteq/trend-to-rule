@@ -92,13 +92,12 @@ services:
       timeout: 5s
       retries: 10
     volumes:
-      - langfuse_postgres_data:/var/lib/postgresql/data
+      - ./.data/langfuse/postgres:/var/lib/postgresql/data
     restart: unless-stopped
 
   langfuse-clickhouse:
     image: clickhouse/clickhouse-server:24.8
     container_name: trend-to-rule-langfuse-clickhouse
-    user: "101:101"
     environment:
       CLICKHOUSE_DB: default
       CLICKHOUSE_USER: clickhouse
@@ -109,8 +108,8 @@ services:
       timeout: 5s
       retries: 10
     volumes:
-      - langfuse_clickhouse_data:/var/lib/clickhouse
-      - langfuse_clickhouse_logs:/var/log/clickhouse-server
+      - ./.data/langfuse/clickhouse:/var/lib/clickhouse
+      - ./.data/langfuse/clickhouse-logs:/var/log/clickhouse-server
     restart: unless-stopped
 
   langfuse-valkey:
@@ -124,7 +123,7 @@ services:
       timeout: 5s
       retries: 10
     volumes:
-      - langfuse_valkey_data:/data
+      - ./.data/langfuse/valkey:/data
     restart: unless-stopped
 
   langfuse-seaweedfs:
@@ -158,7 +157,7 @@ services:
       timeout: 5s
       retries: 30
     volumes:
-      - langfuse_seaweedfs_data:/data
+      - ./.data/langfuse/seaweedfs:/data
     restart: unless-stopped
 
   langfuse-seaweedfs-init:
@@ -176,10 +175,3 @@ services:
       -c "aws --endpoint-url http://langfuse-seaweedfs:8333 s3api create-bucket
       --bucket langfuse 2>/dev/null || true"
     restart: "no"
-
-volumes:
-  langfuse_postgres_data:
-  langfuse_clickhouse_data:
-  langfuse_clickhouse_logs:
-  langfuse_valkey_data:
-  langfuse_seaweedfs_data:

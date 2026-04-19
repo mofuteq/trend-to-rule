@@ -105,14 +105,21 @@ openssl rand -hex 32
 
 ## Persistence
 
-Langfuse state persists across restarts in these Docker volumes declared by
-the overlay:
+All Langfuse state is bind-mounted from the host under `.data/langfuse/`
+(git-ignored), alongside Qdrant's `.data/qdrant/`:
 
-- `langfuse_postgres_data`
-- `langfuse_clickhouse_data`
-- `langfuse_clickhouse_logs`
-- `langfuse_valkey_data`
-- `langfuse_seaweedfs_data`
+- `.data/langfuse/postgres/` — metadata store
+- `.data/langfuse/clickhouse/` — traces and observations
+- `.data/langfuse/clickhouse-logs/` — ClickHouse server logs
+- `.data/langfuse/valkey/` — queue + cache
+- `.data/langfuse/seaweedfs/` — event and media blob store
+
+On first boot Docker creates these directories on the host as `root:root`.
+Postgres, ClickHouse, Valkey, and SeaweedFS all initialise as root before
+dropping to their service user, so they chown their own data dirs and work
+out of the box. If you run a variant that cannot chown (for example a
+rootless Docker setup), pre-create the directories with appropriate
+ownership before the first `up`.
 
 ## SeaweedFS notes
 

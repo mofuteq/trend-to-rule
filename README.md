@@ -280,7 +280,7 @@ Compose details:
 - Local runtime data is mounted from `.data/` into the container at `/app/.data`.
 - Environment variables are loaded from `src/.env` via `env_file`.
 
-Qdrant storage remains persisted in the Docker volume `qdrant_data`.
+All persistent state lives on the host under `.data/` (git-ignored). Qdrant uses `.data/qdrant/`; the optional Langfuse overlay uses `.data/langfuse/{postgres,clickhouse,clickhouse-logs,valkey,seaweedfs}/`.
 
 For optional Langfuse-backed tracing, start the overlay alongside the base stack:
 
