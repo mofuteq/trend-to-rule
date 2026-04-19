@@ -1,31 +1,33 @@
 # trend-to-rule
 
-Structural trend distillation engine that separates canonical patterns from emerging signals across multi-source articles.
+Observable reasoning system for distilling noisy fashion trend narratives into reusable style rules and grounded visual references.
 
 ---
 
 ## Overview
 
-trend-to-rule is a structural reasoning system that converts noisy multi-source trend narratives into reusable decision rules.
+trend-to-rule is an observable reasoning system for turning noisy multi-source fashion narratives into reusable style rules.
 
-Instead of summarizing retrieved documents, the system separates canonical patterns from emerging signals and synthesizes higher‑level rules that explain how trends evolve.
+Instead of acting as a summarizer or a hidden recommendation engine, the system separates canonical patterns from emerging signals, extracts structured claims, and synthesizes higher-level rules that help users reason about how style norms evolve.
 
-It ingests multi-source articles, performs structured retrieval, separates stable (canonical) patterns from emerging signals, and outputs reusable design rules in a deterministic JSON schema.
+The goal is not to automate taste or replace human judgment.
+The goal is to provide inspectable structure: stable patterns, emerging shifts, explicit trade-offs, and concrete examples that make the distilled rule easier to apply.
 
-The system performs claim-level extraction before structural synthesis so that reasoning operates on structured signals rather than raw article chunks.
+The system ingests multi-source articles, performs structured retrieval, separates stable (canonical) patterns from emerging signals, and produces reusable rule-like outputs backed by explicit intermediate artifacts.
 
-trend-to-rule is not an LLM-centric agent.
-Rather than delegating end-to-end decision-making to the model, it enforces an explicit reasoning pipeline in which LLMs operate as controlled transformation components inside a human-designed system.
-The final decision remains with the user.
+LLMs are not treated as autonomous agents here.
+They are used as controlled transformation components inside a human-designed pipeline.
+The final judgment remains with the user.
 
-This is not a knowledge retrieval tool.
-This is not a summarizer.
+This is not just a retrieval tool.
+This is not just a summarizer.
 
 The system operates as a staged pipeline:
 ```
 collect → extract → embed → retrieval → claim extraction → structural synthesis → rule generation → visual example retrieval
 ```
-The goal is structural distillation: transforming noisy trend narratives into reusable reasoning artifacts.
+
+The goal is structural distillation: transforming noisy trend narratives into reusable reasoning artifacts that users can inspect, question, and apply.
 
 ### Visual Example Retrieval
 
@@ -56,6 +58,8 @@ This keeps the search step:
 The core idea is that retrieval itself becomes a reasoning primitive.
 
 The goal is to model how humans derive rules from observed trends.
+
+Visual examples are subordinate to reasoning: they exist to concretize a rule, not to replace the rule with opaque recommendation behavior.
 
 Sample output:
 
@@ -180,6 +184,8 @@ Large Language Models generate plausible summaries, but they often:
 - Cross-source structural synthesis
 - Deterministic output schema
 - Reproducible intermediate stages
+
+For users, this means less time spent reading fragmented trend articles and more time spent reasoning with explicit structure: what is stable, what is changing, and what concrete examples instantiate the rule.
 
 ---
 
@@ -559,11 +565,13 @@ This makes it easier to inspect failures, tune query rendering, and avoid vendor
 
 Planned improvements include:
 
-- Further improvements to claim-level extraction precision and robustness
-- Retrieval ranking tuned for canonical vs emerging signals
-- Expanded evaluation datasets for trend evolution tasks
+- Better claim-level extraction precision and robustness
+- Improved retrieval ranking for canonical vs emerging separation
+- Better visual grounding and query rendering for example retrieval
+- Observability-driven iteration using Langfuse traces and structured intermediate artifacts
+- A separate generalized evaluation repository for benchmarking structural reasoning against simpler retrieval baselines
 
-These additions aim to further strengthen the separation between stable structure and transient trend signals.
+These additions aim to strengthen both the product value of the system and the clarity of its reasoning process.
 
 ---
 
