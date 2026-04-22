@@ -2,6 +2,7 @@ import argparse
 import hashlib
 import json
 import logging
+from logging.handlers import TimedRotatingFileHandler
 import os
 import re
 import sys
@@ -27,6 +28,7 @@ else:
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / ".data"
 INPUT_LMDB = DATA_DIR / "article_db"
+DEFAULT_LOG_PATH = DATA_DIR / "logs" / "embed_articles.log"
 
 DEFAULT_MODEL_NAME = "BAAI/bge-m3"
 DEFAULT_COLLECTION = "article_markdown_bge_m3"
@@ -80,9 +82,43 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Update payload only without embedding/upserting vectors",
     )
+    parser.add_argument(
+        "--log-path",
+        type=Path,
+        default=DEFAULT_LOG_PATH,
+        help="Log file path. Rotated daily and keeps 5 days by default.",
+    )
     return parser.parse_args()
 
+def setup_logging(log_path: Path) -> None:
+    """Configure console and daily rotating file logging.
 
+    Args:
+        log_path: Log file path. Parent directories are created automatically.
+    """
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s - %(message)s"
+    )
+
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+
+    file_handler = TimedRotatingFileHandler(
+        filename=log_path,
+        when="midnight",
+        interval=1,
+        backupCount=5,
+        encoding="utf-8",
+        utc=False,
+    )
+    file_handler.setFormatter(formatter)
+
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(logging.INFO)
+    root_logger.addHandler(console_handler)
+    root_logger.addHandler(file_handler)
 
 def iter_lmdb(path: Path):
     """Yield JSON records from LMDB values."""
@@ -330,7 +366,7 @@ def split_by_h2(body_markdown: str) -> list[tuple[str, str]]:
     return sections
 
 
-def build_chunk_records(record: dict[str, Any], infer_attribute: bool = True) -> list[dict[str, Any]]:
+def build_chunk_records(record: dict[str, Any], infer_article_metadata: bool = True) -> list[dict[str, Any]]:
     """Build H2-based chunk records from one extracted document."""
     markdown = str(record.get("markdown") or "")
     if not markdown.strip():
@@ -340,9 +376,9 @@ def build_chunk_records(record: dict[str, Any], infer_attribute: bool = True) ->
 
     vertical = "unknown"
     language = ""
-    if infer_attribute:
+    if infer_article_metadata:
         try:
-            article_attribute = infer_attribute(article_text=body)
+            article_attribute = infer_attribute(input_text=body)
             vertical = str(article_attribute.vertical)
             language = str(article_attribute.language)
         except Exception as err:
@@ -500,11 +536,9 @@ def update_payload_only(
 def main() -> None:
     """Run embedding pipeline from LMDB to Qdrant."""
     args = parse_args()
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    )
+    setup_logging(args.log_path)
     device = resolve_device(args.device)
+    logger.info("log_path=%s rotation=daily backup_count=5", args.log_path)
     logger.info("embedding_device=%s", device)
     logger.info("embedding_model=%s", args.model_name)
 
@@ -534,7 +568,7 @@ def main() -> None:
                 break
             processed_records += 1
 
-            chunks_for_check = build_chunk_records(rec, infer_attribute=False)
+            chunks_for_check = build_chunk_records(rec, infer_article_metadata=False)
             if not chunks_for_check:
                 logger.warning("[%s] skip no h2 chunks", processed_records)
                 continue
@@ -551,7 +585,7 @@ def main() -> None:
                 continue
 
             # Infer attributes only when at least one point exists in Qdrant.
-            enriched_chunks = build_chunk_records(rec, infer_attribute=True)
+            enriched_chunks = build_chunk_records(rec, infer_article_metadata=True)
             enriched_by_id = {str(ch.get("point_id") or ""): ch for ch in enriched_chunks}
             chunks = [
                 enriched_by_id[str(ch.get("point_id") or "")]
@@ -614,7 +648,7 @@ def main() -> None:
             break
         processed_records += 1
 
-        chunks_for_check = build_chunk_records(rec, infer_attribute=False)
+        chunks_for_check = build_chunk_records(rec, infer_article_metadata=False)
         if not chunks_for_check:
             logger.warning("[%s] skip no h2 chunks", processed_records)
             continue
@@ -635,7 +669,7 @@ def main() -> None:
                             processed_records, str(rec.get("title") or "")[:80])
                 continue
             # Infer attributes only when there are points to embed.
-            enriched_chunks = build_chunk_records(rec, infer_attribute=True)
+            enriched_chunks = build_chunk_records(rec, infer_article_metadata=True)
             enriched_by_id = {str(ch.get("point_id") or ""): ch for ch in enriched_chunks}
             chunks = [
                 enriched_by_id[str(ch.get("point_id") or "")]
@@ -645,7 +679,7 @@ def main() -> None:
             if not chunks:
                 continue
         else:
-            chunks = build_chunk_records(rec, infer_attribute=True)
+            chunks = build_chunk_records(rec, infer_article_metadata=True)
             if not chunks:
                 logger.warning("[%s] skip no h2 chunks", processed_records)
                 continue

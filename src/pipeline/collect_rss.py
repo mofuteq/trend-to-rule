@@ -2,6 +2,8 @@
 import argparse
 import hashlib
 import json
+import logging
+from logging.handlers import TimedRotatingFileHandler
 import ssl
 import time
 import urllib.request
@@ -18,9 +20,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / ".data"
 OUT_PATH = DATA_DIR / "rss_db"
 DEBUG_JSONL_PATH = DATA_DIR / "raw_feed_items.jsonl"
+DEFAULT_LOG_PATH = DATA_DIR / "logs" / "collect_rss.log"
 MAP_SIZE = 128 * 1024 * 1024  # 128MB
 REQUEST_INTERVAL_SECONDS = 1.5
 CHECKPOINT_PATH = DATA_DIR / "collect_rss_checkpoint.json"
+logger = logging.getLogger(__name__)
 
 
 class FeedItem(TypedDict):
@@ -65,7 +69,44 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Delete checkpoint file before running.",
     )
+    parser.add_argument(
+        "--log-path",
+        type=Path,
+        default=DEFAULT_LOG_PATH,
+        help="Log file path. Rotated daily and keeps 5 days by default.",
+    )
     return parser.parse_args()
+
+
+def setup_logging(log_path: Path) -> None:
+    """Configure console and daily rotating file logging.
+
+    Args:
+        log_path: Log file path. Parent directories are created automatically.
+    """
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s - %(message)s"
+    )
+
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+
+    file_handler = TimedRotatingFileHandler(
+        filename=log_path,
+        when="midnight",
+        interval=1,
+        backupCount=5,
+        encoding="utf-8",
+        utc=False,
+    )
+    file_handler.setFormatter(formatter)
+
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(logging.INFO)
+    root_logger.addHandler(console_handler)
+    root_logger.addHandler(file_handler)
 
 
 def iso_now() -> str:
@@ -301,12 +342,15 @@ def save_checkpoint(path: Path, task_idx: int) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     payload: TaskCheckpoint = {"last_completed_task_idx": int(task_idx)}
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    path.write_text(json.dumps(payload, ensure_ascii=False,
+                    indent=2), encoding="utf-8")
 
 
 def main() -> None:
     """Collect multiple RSS queries and persist results."""
     args = parse_args()
+    setup_logging(args.log_path)
+    logger.info("log_path=%s rotation=daily backup_count=5", args.log_path)
     if args.reset_checkpoint and args.checkpoint_path.exists():
         args.checkpoint_path.unlink()
 
@@ -341,6 +385,16 @@ def main() -> None:
             "classic style social signaling",
             "professional dress code baseline",
             "understated elegance cultural meaning",
+            # Added and expanded mens-focused queries:
+            "men's quiet luxury style",
+            "men's minimalist luxury wardrobe",
+            "menswear understated elegance",
+            "men's fashion classic essentials",
+            "timeless menswear style",
+            "men's business casual luxury",
+            "men's old money aesthetic",
+            "men's fashion preppy wardrobe",
+            "men's professional dress code",
         ],
         "emerging": [
             f"quiet luxury trend {year}" for year in years
@@ -360,6 +414,15 @@ def main() -> None:
             f"Gen Z luxury shift {year}" for year in years
         ] + [
             f"fashion trend adoption {year} luxury" for year in years
+        ] + [
+            # Mens-focused emerging coverage
+            f"men's quiet luxury trend {year}" for year in years
+        ] + [
+            f"men's minimalist luxury trend {year}" for year in years
+        ] + [
+            f"menswear understated elegance trend {year}" for year in years
+        ] + [
+            f"men's old money fashion trend {year}" for year in years
         ],
         "proxy_culture": [
             "luxury fashion market shift",
@@ -369,6 +432,12 @@ def main() -> None:
             "status signaling fashion culture",
             "post pandemic fashion values",
             "fashion aesthetics social media shift",
+            # Menswear and culture proxies
+            "menswear luxury market shift",
+            "men's luxury fashion strategy",
+            "men's fashion retail trends",
+            "men's consumer preference luxury",
+            "men's fashion values culture",
         ],
     }
 
@@ -386,12 +455,14 @@ def main() -> None:
     total_tasks = sum(len(group_queries)
                       for group_queries in query_groups.values()) * len(locales)
     task_idx = 0
-    checkpoint = load_checkpoint(args.checkpoint_path) if args.resume else {"last_completed_task_idx": 0}
+    checkpoint = load_checkpoint(args.checkpoint_path) if args.resume else {
+        "last_completed_task_idx": 0}
     resume_from = checkpoint["last_completed_task_idx"]
     if args.resume and resume_from > 0:
-        print(
-            f"Resume enabled: skipping tasks <= {resume_from} "
-            f"(checkpoint={args.checkpoint_path})"
+        logger.info(
+            "resume enabled: skipping tasks <= %s checkpoint=%s",
+            resume_from,
+            args.checkpoint_path,
         )
 
     for group_name, group_queries in query_groups.items():
@@ -418,28 +489,42 @@ def main() -> None:
                 total_inserted += inserted
                 total_updated += updated
 
-                print(
-                    f"[{task_idx}/{total_tasks}] group='{group_name}' query='{query}' "
-                    f"locale='{locale_cfg['hl']}' -> {len(items)} items "
-                    f"(inserted={inserted}, updated={updated})"
+                logger.info(
+                    "[%s/%s] group=%s query=%s locale=%s items=%s inserted=%s updated=%s",
+                    task_idx,
+                    total_tasks,
+                    group_name,
+                    query,
+                    locale_cfg["hl"],
+                    len(items),
+                    inserted,
+                    updated,
                 )
 
                 for i, item in enumerate(items, 1):
-                    print(
-                        f"{i}. {item['title']}\n"
-                        f"   {item['link']}\n"
-                        f"   source={item['source']} published_at={item['published_at']}\n"
+                    logger.info(
+                        "[%s/%s] item=%s title=%s link=%s source=%s published_at=%s",
+                        task_idx,
+                        total_tasks,
+                        i,
+                        item["title"],
+                        item["link"],
+                        item["source"],
+                        item["published_at"],
                     )
 
                 time.sleep(REQUEST_INTERVAL_SECONDS)
 
-    print(
-        f"Saved total {total_items} items -> {OUT_PATH} "
-        f"(inserted={total_inserted}, updated={total_updated})"
+    logger.info(
+        "done: total_items=%s output_lmdb=%s inserted=%s updated=%s",
+        total_items,
+        OUT_PATH,
+        total_inserted,
+        total_updated,
     )
-    print(f"Debug JSONL append -> {DEBUG_JSONL_PATH}")
+    logger.info("debug_jsonl=%s", DEBUG_JSONL_PATH)
     if args.checkpoint_path.exists():
-        print(f"Checkpoint -> {args.checkpoint_path}")
+        logger.info("checkpoint=%s", args.checkpoint_path)
 
 
 if __name__ == "__main__":

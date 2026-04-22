@@ -2,6 +2,8 @@ import argparse
 import hashlib
 import html as html_lib
 import json
+import logging
+from logging.handlers import TimedRotatingFileHandler
 import re
 import time
 from pathlib import Path
@@ -25,6 +27,7 @@ DATA_DIR = PROJECT_ROOT / ".data"
 INPUT_LMDB = DATA_DIR / "rss_db"
 OUTPUT_LMDB = DATA_DIR / "article_db"
 DEBUG_JSONL_PATH = DATA_DIR / "extracted_articles.jsonl"
+DEFAULT_LOG_PATH = DATA_DIR / "logs" / "extract_articles.log"
 LMDB_MAP_SIZE = 512 * 1024 * 1024  # 512MB
 REQUEST_TIMEOUT_SECONDS = 20
 REQUEST_INTERVAL_SECONDS = 1.5
@@ -42,6 +45,7 @@ BLOCKED_EXACT_URLS = {
     "https://www.w3.org/XML/1998/namespace",
     "http://www.w3.org/XML/1998/namespace",
 }
+logger = logging.getLogger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
@@ -78,7 +82,44 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Process only records not present in output LMDB",
     )
+    parser.add_argument(
+        "--log-path",
+        type=Path,
+        default=DEFAULT_LOG_PATH,
+        help="Log file path. Rotated daily and keeps 5 days by default.",
+    )
     return parser.parse_args()
+
+
+def setup_logging(log_path: Path) -> None:
+    """Configure console and daily rotating file logging.
+
+    Args:
+        log_path: Log file path. Parent directories are created automatically.
+    """
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s - %(message)s"
+    )
+
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+
+    file_handler = TimedRotatingFileHandler(
+        filename=log_path,
+        when="midnight",
+        interval=1,
+        backupCount=5,
+        encoding="utf-8",
+        utc=False,
+    )
+    file_handler.setFormatter(formatter)
+
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(logging.INFO)
+    root_logger.addHandler(console_handler)
+    root_logger.addHandler(file_handler)
 
 
 def iter_lmdb(path: Path):
@@ -779,6 +820,8 @@ def process_record(record: dict[str, Any], use_readability: bool = True) -> dict
 def main() -> None:
     """Run extraction pipeline from RSS LMDB to extracted LMDB and debug JSONL."""
     args = parse_args()
+    setup_logging(args.log_path)
+    logger.info("log_path=%s rotation=daily backup_count=5", args.log_path)
     args.output_lmdb.mkdir(parents=True, exist_ok=True)
     args.debug_jsonl.parent.mkdir(parents=True, exist_ok=True)
 
@@ -791,7 +834,7 @@ def main() -> None:
     existing_keys: set[str] = set()
     if args.only_new:
         existing_keys = load_lmdb_keys(args.output_lmdb)
-        print(f"Loaded existing keys: {len(existing_keys)} from {args.output_lmdb}")
+        logger.info("loaded_existing_keys count=%s output_lmdb=%s", len(existing_keys), args.output_lmdb)
 
     for record in iter_lmdb(args.input_lmdb):
         if args.limit > 0 and processed >= args.limit:
@@ -801,7 +844,7 @@ def main() -> None:
         if args.only_new and dedupe_key and dedupe_key in existing_keys:
             processed += 1
             skipped_existing += 1
-            print(f"[{processed}] skip existing title={str(record.get('title') or '')[:80]}")
+            logger.info("[%s] skip existing title=%s", processed, str(record.get("title") or "")[:80])
             continue
 
         processed += 1
@@ -814,21 +857,30 @@ def main() -> None:
             if args.only_new and dedupe_key:
                 existing_keys.add(dedupe_key)
             succeeded += 1
-            print(
-                f"[{processed}] ok  body_chars={extracted['markdown_body_chars']} "
-                f"title={extracted['title'][:80]} "
-                f"(inserted={inserted}, updated={updated})"
+            logger.info(
+                "[%s] ok body_chars=%s title=%s inserted=%s updated=%s",
+                processed,
+                extracted["markdown_body_chars"],
+                extracted["title"][:80],
+                inserted,
+                updated,
             )
         except Exception as exc:  # noqa: BLE001
             failed += 1
-            print(f"[{processed}] ng  title={record.get('title', '')[:80]} err={exc}")
+            logger.warning("[%s] ng title=%s err=%s", processed, record.get("title", "")[:80], exc)
 
         time.sleep(max(0.0, args.interval))
 
-    print(
-        f"Done: processed={processed}, succeeded={succeeded}, failed={failed}, skipped_existing={skipped_existing}, "
-        f"lmdb={args.output_lmdb} (inserted={total_inserted}, updated={total_updated}), "
-        f"debug_jsonl={args.debug_jsonl}"
+    logger.info(
+        "done: processed=%s succeeded=%s failed=%s skipped_existing=%s lmdb=%s inserted=%s updated=%s debug_jsonl=%s",
+        processed,
+        succeeded,
+        failed,
+        skipped_existing,
+        args.output_lmdb,
+        total_inserted,
+        total_updated,
+        args.debug_jsonl,
     )
 
 

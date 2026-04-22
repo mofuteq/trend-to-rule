@@ -319,6 +319,7 @@ uv run src/pipeline/collect_rss.py --reset-checkpoint
 - LMDB: `.data/rss_db`
 - Debug JSONL: `.data/raw_feed_items.jsonl`
 - Checkpoint: `.data/collect_rss_checkpoint.json`
+- Log: `.data/logs/collect_rss.log`
 
 ### Notes
 
@@ -326,6 +327,7 @@ uv run src/pipeline/collect_rss.py --reset-checkpoint
 - Records are deduplicated by `dedupe_key` when writing to LMDB.
 - Checkpoint is updated after each successful task; `--resume` skips tasks up to the saved index.
 - You can override checkpoint path with `--checkpoint-path`.
+- Logs are rotated daily and kept for 5 days. You can override the log path with `--log-path`.
 
 ---
 
@@ -358,11 +360,13 @@ uv run src/pipeline/extract_articles.py \
 - `--interval`: Sleep seconds per record request
 - `--no-readability`: Disable readability-based extraction
 - `--only-new`: Skip records whose `dedupe_key` already exists in output LMDB
+- `--log-path`: Log file path (default: `.data/logs/extract_articles.log`)
 
 ### Notes
 
 - Output Markdown includes frontmatter metadata (e.g. `source_url`, `resolved_url`, `published_at`, `locale`, `country`, `word_count`, `section_count`).
 - LMDB and JSONL are written per record.
+- Logs are written to `.data/logs/extract_articles.log`, rotated daily, and kept for 5 days.
 
 ---
 
@@ -402,12 +406,14 @@ uv run src/pipeline/embed_articles.py \
 - `--recreate`: Drop and recreate collection before ingest
 - `--only-new`: Embed only chunks not already present in Qdrant
 - `--update-payload-only`: Update payload only (no re-embedding, no vector overwrite)
+- `--log-path`: Log file path (default: `.data/logs/embed_articles.log`)
 
 
 ### Notes
 
 - Requires Qdrant running via Docker Compose. Use `--qdrant-url http://localhost:6333` (default).
 - Payload includes metadata such as `published_ts` and `ingested_ts` (Unix time).
+- Logs are written to `.data/logs/embed_articles.log`, rotated daily, and kept for 5 days.
 
 ---
 
