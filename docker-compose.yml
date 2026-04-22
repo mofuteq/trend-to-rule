@@ -11,7 +11,6 @@ services:
       - ./src/.env
     environment:
       VECTOR_QDRANT_URL: http://qdrant:6333
-      VECTOR_QDRANT_PATH: ""
       SEARXNG_BASE_URL: http://searxng:8080
     ports:
       - "8501:8501"
@@ -25,7 +24,7 @@ services:
     ports:
       - "6333:6333"
     volumes:
-      - qdrant_data:/qdrant/storage
+      - ./.data/qdrant:/qdrant/storage
     restart: unless-stopped
 
   searxng:
@@ -38,6 +37,3 @@ services:
     volumes:
       - ./searxng:/etc/searxng:rw
     restart: unless-stopped
-
-volumes:
-  qdrant_data:

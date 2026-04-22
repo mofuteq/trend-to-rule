@@ -12,6 +12,7 @@ from core.models import (
     Claim,
     ExampleQuerySpec
 )
+from services import tracing
 from services.llm_client import DEFAULT_OPENAI_MODEL, create
 from services.prompt_service import (
     TEMPLATE_CHAT_TITLE,
@@ -25,6 +26,7 @@ from services.prompt_service import (
 )
 
 
+@tracing.observe(name="generate_search_query")
 def generate_search_query(
     user_prompt: str,
     user_goal: str,
@@ -58,6 +60,7 @@ def generate_search_query(
     return search_query
 
 
+@tracing.observe(name="infer_attribute")
 def infer_attribute(
     input_text: str,
     task: Literal["article", "user_prompt"] = "article",
@@ -94,6 +97,7 @@ def infer_attribute(
     return res
 
 
+@tracing.observe(name="analyze_user_needs")
 def analyze_user_needs(
     user_prompt: str,
     api_key: str | None = None,
@@ -142,6 +146,7 @@ def analyze_user_needs(
     )
 
 
+@tracing.observe(name="extract_claims")
 def extract_claims(
     canonical_context: str,
     emerging_context: str,
@@ -187,6 +192,7 @@ __all__ = [
 ]
 
 
+@tracing.observe(name="extract_structured_draft")
 def extract_structured_draft(
     canonical_claims: list[Claim],
     emerging_claims: list[Claim],
@@ -229,6 +235,7 @@ def extract_structured_draft(
     return res
 
 
+@tracing.observe(name="generate_decision_support")
 def generate_decision_support(
     user_prompt: str,
     user_goal: str,
@@ -269,6 +276,7 @@ def generate_decision_support(
     return res.text
 
 
+@tracing.observe(name="generate_query")
 def generate_query(
     user_goal: str,
     rule: str,
@@ -301,6 +309,7 @@ def generate_query(
     return res
 
 
+@tracing.observe(name="generate_chat_title")
 def generate_chat_title(
     messages: list[dict[str, str]],
     api_key: str | None = None,

@@ -107,7 +107,6 @@ def main() -> None:
         vector_collection=CONFIG.vector_collection,
         vector_model_name=CONFIG.vector_model_name,
         vector_device=CONFIG.vector_device,
-        vector_qdrant_path=CONFIG.vector_qdrant_path,
         vector_qdrant_url=CONFIG.vector_qdrant_url,
     )
     load_active_chat(

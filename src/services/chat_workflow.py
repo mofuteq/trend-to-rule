@@ -12,6 +12,7 @@ from retrieval.app_retrieval import (
     points_to_table_rows,
     retrieve_vector_results_by_queries,
 )
+from services import tracing
 from services.chat import (
     extract_claims,
     extract_structured_draft,
@@ -71,6 +72,7 @@ class AssistantResponseBundle:
     image_results: list[ImageSearchResult]
 
 
+@tracing.observe(name="retrieve_supporting_context")
 def retrieve_supporting_context(
     user_needs: UserNeeds,
     *,
@@ -104,6 +106,7 @@ def retrieve_supporting_context(
     )
 
 
+@tracing.observe(name="generate_assistant_response")
 def generate_assistant_response(
     user_prompt: str,
     *,

@@ -1,0 +1,171 @@
+x-langfuse-env: &langfuse-env
+  DATABASE_URL: postgresql://postgres:${LANGFUSE_POSTGRES_PASSWORD:-postgres}@langfuse-postgres:5432/postgres
+  SALT: ${LANGFUSE_SALT:-change-me-salt}
+  ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+  TELEMETRY_ENABLED: "true"
+  LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
+  CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+  CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+  CLICKHOUSE_USER: clickhouse
+  CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-clickhouse}
+  CLICKHOUSE_CLUSTER_ENABLED: "false"
+  REDIS_HOST: langfuse-valkey
+  REDIS_PORT: "6379"
+  REDIS_AUTH: ${LANGFUSE_VALKEY_AUTH:-valkey}
+  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_S3_ACCESS_KEY_ID:-langfuse}
+  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_S3_SECRET_ACCESS_KEY:-langfusesecret}
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-seaweedfs:8333
+  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_S3_ACCESS_KEY_ID:-langfuse}
+  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_S3_SECRET_ACCESS_KEY:-langfusesecret}
+  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://langfuse-seaweedfs:8333
+  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+
+services:
+  app:
+    depends_on:
+      - langfuse-web
+    environment:
+      LANGFUSE_HOST: http://langfuse-web:3000
+
+  langfuse-web:
+    image: langfuse/langfuse:3
+    container_name: trend-to-rule-langfuse-web
+    depends_on:
+      langfuse-postgres:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-valkey:
+        condition: service_healthy
+      langfuse-seaweedfs-init:
+        condition: service_completed_successfully
+    env_file:
+      - ./src/.env
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3000}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-change-me-nextauth-secret}
+      AUTH_DISABLE_SIGNUP: "true"
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    container_name: trend-to-rule-langfuse-worker
+    depends_on:
+      langfuse-postgres:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-valkey:
+        condition: service_healthy
+      langfuse-seaweedfs-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *langfuse-env
+    restart: unless-stopped
+
+  langfuse-postgres:
+    image: postgres:17
+    container_name: trend-to-rule-langfuse-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${LANGFUSE_POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - ./.data/langfuse/postgres:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  langfuse-clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: trend-to-rule-langfuse-clickhouse
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-clickhouse}
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - ./.data/langfuse/clickhouse:/var/lib/clickhouse
+      - ./.data/langfuse/clickhouse-logs:/var/log/clickhouse-server
+    restart: unless-stopped
+
+  langfuse-valkey:
+    image: valkey/valkey:8
+    container_name: trend-to-rule-langfuse-valkey
+    command: >
+      --requirepass ${LANGFUSE_VALKEY_AUTH:-valkey}
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-a", "${LANGFUSE_VALKEY_AUTH:-valkey}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - ./.data/langfuse/valkey:/data
+    restart: unless-stopped
+
+  langfuse-seaweedfs:
+    image: chrislusf/seaweedfs:4.20
+    container_name: trend-to-rule-langfuse-seaweedfs
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        mkdir -p /etc/seaweedfs
+        cat > /etc/seaweedfs/s3config.json <<'EOF'
+        {
+          "identities": [
+            {
+              "name": "langfuse",
+              "credentials": [
+                {
+                  "accessKey": "${LANGFUSE_S3_ACCESS_KEY_ID:-langfuse}",
+                  "secretKey": "${LANGFUSE_S3_SECRET_ACCESS_KEY:-langfusesecret}"
+                }
+              ],
+              "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+            }
+          ]
+        }
+        EOF
+        exec weed server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3config.json
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:9333/cluster/status"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - ./.data/langfuse/seaweedfs:/data
+    restart: unless-stopped
+
+  langfuse-seaweedfs-init:
+    image: amazon/aws-cli:2.17.0
+    container_name: trend-to-rule-langfuse-seaweedfs-init
+    depends_on:
+      langfuse-seaweedfs:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: ${LANGFUSE_S3_ACCESS_KEY_ID:-langfuse}
+      AWS_SECRET_ACCESS_KEY: ${LANGFUSE_S3_SECRET_ACCESS_KEY:-langfusesecret}
+      AWS_DEFAULT_REGION: auto
+    entrypoint: /bin/sh
+    command: >
+      -c "aws --endpoint-url http://langfuse-seaweedfs:8333 s3api create-bucket
+      --bucket langfuse 2>/dev/null || true"
+    restart: "no"

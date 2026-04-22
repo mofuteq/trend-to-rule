@@ -1,31 +1,33 @@
 # trend-to-rule
 
-Structural trend distillation engine that separates canonical patterns from emerging signals across multi-source articles.
+Observable reasoning system for distilling noisy fashion trend narratives into reusable style rules and grounded visual references.
 
 ---
 
 ## Overview
 
-trend-to-rule is a structural reasoning system that converts noisy multi-source trend narratives into reusable decision rules.
+trend-to-rule is an observable reasoning system for turning noisy multi-source fashion narratives into reusable style rules.
 
-Instead of summarizing retrieved documents, the system separates canonical patterns from emerging signals and synthesizes higher‑level rules that explain how trends evolve.
+Instead of acting as a summarizer or a hidden recommendation engine, the system separates canonical patterns from emerging signals, extracts structured claims, and synthesizes higher-level rules that help users reason about how style norms evolve.
 
-It ingests multi-source articles, performs structured retrieval, separates stable (canonical) patterns from emerging signals, and outputs reusable design rules in a deterministic JSON schema.
+The goal is not to automate taste or replace human judgment.
+The goal is to provide inspectable structure: stable patterns, emerging shifts, explicit trade-offs, and concrete examples that make the distilled rule easier to apply.
 
-The system performs claim-level extraction before structural synthesis so that reasoning operates on structured signals rather than raw article chunks.
+The system ingests multi-source articles, performs structured retrieval, separates stable (canonical) patterns from emerging signals, and produces reusable rule-like outputs backed by explicit intermediate artifacts.
 
-trend-to-rule is not an LLM-centric agent.
-Rather than delegating end-to-end decision-making to the model, it enforces an explicit reasoning pipeline in which LLMs operate as controlled transformation components inside a human-designed system.
-The final decision remains with the user.
+LLMs are not treated as autonomous agents here.
+They are used as controlled transformation components inside a human-designed pipeline.
+The final judgment remains with the user.
 
-This is not a knowledge retrieval tool.
-This is not a summarizer.
+This is not just a retrieval tool.
+This is not just a summarizer.
 
 The system operates as a staged pipeline:
 ```
 collect → extract → embed → retrieval → claim extraction → structural synthesis → rule generation → visual example retrieval
 ```
-The goal is structural distillation: transforming noisy trend narratives into reusable reasoning artifacts.
+
+The goal is structural distillation: transforming noisy trend narratives into reusable reasoning artifacts that users can inspect, question, and apply.
 
 ### Visual Example Retrieval
 
@@ -56,6 +58,8 @@ This keeps the search step:
 The core idea is that retrieval itself becomes a reasoning primitive.
 
 The goal is to model how humans derive rules from observed trends.
+
+Visual examples are subordinate to reasoning: they exist to concretize a rule, not to replace the rule with opaque recommendation behavior.
 
 Sample output:
 
@@ -181,6 +185,8 @@ Large Language Models generate plausible summaries, but they often:
 - Deterministic output schema
 - Reproducible intermediate stages
 
+For users, this means less time spent reading fragmented trend articles and more time spent reasoning with explicit structure: what is stable, what is changing, and what concrete examples instantiate the rule.
+
 ---
 
 ## Environment Setup (uv)
@@ -205,7 +211,6 @@ OPENAI_MODEL=gemma4:e4b
 OPENAI_REASONING_EFFORT=low
 
 VECTOR_QDRANT_URL=http://localhost:6333
-VECTOR_QDRANT_PATH=
 VECTOR_COLLECTION=article_markdown_bge_m3
 VECTOR_MODEL_NAME=BAAI/bge-m3
 VECTOR_DEVICE=auto
@@ -217,6 +222,10 @@ SEARXNG_IMAGE_LIMIT=5
 
 CHAT_DB_PATH=.data/chat_db
 APP_LOG_LEVEL=INFO
+
+LANGFUSE_PUBLIC_KEY=
+LANGFUSE_SECRET_KEY=
+LANGFUSE_HOST=
 ```
 
 Notes:
@@ -226,12 +235,12 @@ Notes:
 - `OPENAI_BASE_URL`: Default OpenAI-compatible endpoint. Example: Ollama at `http://localhost:11434/v1`.
 - `OPENAI_MODEL`: Default non-Gemini model name.
 - `OPENAI_REASONING_EFFORT`: Default reasoning level for non-Gemini models. Supported values are `low`, `medium`, and `high`.
-- `VECTOR_QDRANT_URL`: Qdrant endpoint used by the Streamlit app when `VECTOR_QDRANT_PATH` is empty.
-- `VECTOR_QDRANT_PATH`: Optional filesystem path for local embedded Qdrant. Leave empty to use `VECTOR_QDRANT_URL`.
+- `VECTOR_QDRANT_URL`: Qdrant endpoint URL (default: `http://localhost:6333`).
 - `SEARXNG_BASE_URL`: Optional SearXNG endpoint for app-side web search integration.
 - `SEARXNG_IMAGE_LIMIT`: Maximum number of deduplicated image results rendered by the app.
 - `CHAT_DB_PATH`: LMDB path for chat history and session metadata.
 - `APP_LOG_LEVEL`: Application log level such as `INFO` or `DEBUG`.
+- `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST`: Optional Langfuse tracing. Leave empty to disable. See [docs/langfuse.md](./docs/langfuse.md) for setup and the self-hosted Compose overlay.
 
 SearXNG JSON response example:
 
@@ -239,9 +248,9 @@ SearXNG JSON response example:
 curl "http://localhost:8008/search?q=silicon+valley+fashion&format=json"
 ```
 
-## Run Qdrant With Docker Compose
+## Run With Docker Compose
 
-If you want to run the Streamlit app and Qdrant in containers, start them with the bundled Compose file:
+Start the Streamlit app, Qdrant, and SearXNG together with the bundled Compose file:
 
 ```bash
 docker compose up -d
@@ -269,7 +278,15 @@ Compose details:
 - Local runtime data is mounted from `.data/` into the container at `/app/.data`.
 - Environment variables are loaded from `src/.env` via `env_file`.
 
-Qdrant storage remains persisted in the Docker volume `qdrant_data`.
+All persistent state lives on the host under `.data/` (git-ignored). Qdrant uses `.data/qdrant/`; the optional Langfuse overlay uses `.data/langfuse/{postgres,clickhouse,clickhouse-logs,valkey,seaweedfs}/`.
+
+For optional Langfuse-backed tracing, start the overlay alongside the base stack:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.langfuse.yml up -d
+```
+
+See [docs/langfuse.md](./docs/langfuse.md) for setup, bootstrap, env vars, and the SeaweedFS-backed self-hosted stack.
 
 ---
 
@@ -372,23 +389,9 @@ uv run src/pipeline/embed_articles.py \
   --recreate
 ```
 
-### Example: Local Qdrant path
-
-```bash
-uv run src/pipeline/embed_articles.py \
-  --input-lmdb .data/article_db \
-  --collection article_markdown_bge_m3 \
-  --qdrant-path .data/qdrant_data \
-  --batch-size 32 \
-  --device auto \
-  --interval 0.5 \
-  --recreate
-```
-
 ### Main options
 
 - `--input-lmdb`: Input extracted LMDB path (default: `.data/article_db`)
-- `--qdrant-path`: Local persistent Qdrant path (prioritized over `--qdrant-url`)
 - `--qdrant-url`: Qdrant endpoint URL (default: `http://localhost:6333`)
 - `--qdrant-api-key`: Qdrant API key
 - `--collection`: Target Qdrant collection name
@@ -403,9 +406,7 @@ uv run src/pipeline/embed_articles.py \
 
 ### Notes
 
-- Use `--qdrant-url http://localhost:6333` when running Qdrant via Docker Compose.
-- Use `--qdrant-path .data/qdrant_data` for local filesystem persistence.
-- `--qdrant-path` must be a local directory path.
+- Requires Qdrant running via Docker Compose. Use `--qdrant-url http://localhost:6333` (default).
 - Payload includes metadata such as `published_ts` and `ingested_ts` (Unix time).
 
 ---
@@ -546,11 +547,13 @@ This makes it easier to inspect failures, tune query rendering, and avoid vendor
 
 Planned improvements include:
 
-- Further improvements to claim-level extraction precision and robustness
-- Retrieval ranking tuned for canonical vs emerging signals
-- Expanded evaluation datasets for trend evolution tasks
+- Better claim-level extraction precision and robustness
+- Improved retrieval ranking for canonical vs emerging separation
+- Better visual grounding and query rendering for example retrieval
+- Observability-driven iteration using Langfuse traces and structured intermediate artifacts
+- A separate generalized evaluation repository for benchmarking structural reasoning against simpler retrieval baselines
 
-These additions aim to further strengthen the separation between stable structure and transient trend signals.
+These additions aim to strengthen both the product value of the system and the clarity of its reasoning process.
 
 ---
 
@@ -581,6 +584,18 @@ The architecture is intentionally model-agnostic. Lightweight models can be used
 
 If a model returns HTTP 400 because it does not support `reasoning_effort`, the request is automatically retried without `reasoning_effort`.  
 That model is then cached in-process as unsupported, so subsequent calls skip `reasoning_effort` from the first attempt.
+
+---
+
+## Observability with Langfuse
+
+LLM calls and pipeline stages are optionally traced via [Langfuse](https://langfuse.com/). Tracing activates automatically when both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are present in `src/.env`; otherwise `src/services/tracing.py` degrades to a no-op.
+
+Each Streamlit chat turn is captured as a single `chat_turn` trace (tagged with the anonymous user id, chat session id, workflow version, and detected vertical) with nested spans for `analyze_user_needs`, `retrieve_supporting_context`, `extract_claims`, `extract_structured_draft`, `generate_decision_support`, `generate_query`, and `generate_chat_title`.
+
+LLM calls in `services/llm_client.py` are recorded as `generation` spans carrying the model name, input messages, output, token usage (`input` / `output` / `total`), and sampling config (`temperature`, `top_p`, `seed`, `reasoning_effort`).
+
+For self-hosting the Langfuse stack via Compose overlay, see [docs/langfuse.md](./docs/langfuse.md).
 
 ---
 
