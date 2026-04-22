@@ -46,19 +46,13 @@ services:
         condition: service_healthy
       langfuse-seaweedfs-init:
         condition: service_completed_successfully
+    env_file:
+      - ./src/.env
     environment:
       <<: *langfuse-env
       NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3000}
       NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-change-me-nextauth-secret}
-      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-}
-      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-}
-      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-}
-      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-}
-      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-}
-      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:-}
-      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-}
-      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-}
-      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-}
+      AUTH_DISABLE_SIGNUP: "true"
     ports:
       - "3000:3000"
     restart: unless-stopped
@@ -152,7 +146,7 @@ services:
         EOF
         exec weed server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3config.json
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8333"]
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:9333/cluster/status"]
       interval: 5s
       timeout: 5s
       retries: 30

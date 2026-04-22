@@ -11,7 +11,6 @@ services:
       - ./src/.env
     environment:
       VECTOR_QDRANT_URL: http://qdrant:6333
-      VECTOR_QDRANT_PATH: ""
       SEARXNG_BASE_URL: http://searxng:8080
     ports:
       - "8501:8501"

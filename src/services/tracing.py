@@ -15,6 +15,7 @@ the pipeline scripts).
 
 import logging
 import os
+from contextlib import contextmanager
 from typing import Any, Callable, TypeVar
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,10 @@ def is_enabled() -> bool:
 
 
 def get_client() -> Any:
-    """Return a cached Langfuse client or None when disabled/unavailable."""
+    """Return a cached Langfuse client or None when disabled/unavailable.
+
+    Used only for flush(); trace/observation updates go through langfuse_context.
+    """
     global _CLIENT
     if _CLIENT is not None:
         return _CLIENT
@@ -45,16 +49,24 @@ def get_client() -> Any:
     try:
         from langfuse import Langfuse  # type: ignore[import-not-found]
 
+        host = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
         _CLIENT = Langfuse(
             public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
             secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
-            host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com"),
+            host=host,
         )
-        logger.info("Langfuse tracing enabled host=%s", os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com"))
+        logger.info("Langfuse tracing enabled host=%s", host)
         return _CLIENT
     except Exception as err:
         logger.warning("Langfuse initialization failed: %s", err)
         return None
+
+
+def _get_context() -> Any:
+    """Return a Langfuse client or None when disabled/unavailable."""
+    if not is_enabled():
+        return None
+    return get_client()
 
 
 def observe(
@@ -95,14 +107,61 @@ def update_current_generation(**kwargs: Any) -> None:
 
 
 def update_current_trace(**kwargs: Any) -> None:
-    """Attach metadata (user_id, session_id, tags, ...) to the active trace."""
+    """Attach trace attributes and root-span details to the active trace."""
     client = get_client()
     if client is None:
         return
+
+    # Langfuse v4 replaced langfuse_context.update_current_trace with a split model:
+    # trace-level attributes are propagated via propagate_attributes(), while structured
+    # input/output/metadata can still be attached to the current active span.
+    propagation_kwargs = {
+        "user_id": kwargs.get("user_id"),
+        "session_id": kwargs.get("session_id"),
+        "tags": kwargs.get("tags"),
+        "trace_name": kwargs.get("name"),
+    }
+    propagation_kwargs = {
+        key: value for key, value in propagation_kwargs.items() if value is not None
+    }
+
     try:
-        client.update_current_trace(**kwargs)
+        if propagation_kwargs:
+            with propagate_attributes(**propagation_kwargs):
+                pass
     except Exception as err:
-        logger.debug("update_current_trace failed: %s", err)
+        logger.debug("propagate_attributes failed: %s", err)
+
+    span_kwargs = {
+        "name": kwargs.get("name"),
+        "input": kwargs.get("input"),
+        "output": kwargs.get("output"),
+        "metadata": kwargs.get("metadata"),
+    }
+    span_kwargs = {key: value for key, value in span_kwargs.items() if value is not None}
+    if not span_kwargs:
+        return
+    try:
+        client.update_current_span(**span_kwargs)
+    except Exception as err:
+        logger.debug("update_current_span failed: %s", err)
+
+
+@contextmanager
+def propagate_attributes(**kwargs: Any):
+    """Propagate trace-level attributes with a no-op fallback when disabled."""
+    if not is_enabled():
+        yield
+        return
+    try:
+        from langfuse import propagate_attributes as _propagate_attributes  # type: ignore[import-not-found]
+    except Exception as err:
+        logger.warning("Langfuse propagate_attributes import failed: %s", err)
+        yield
+        return
+
+    with _propagate_attributes(**kwargs):
+        yield
 
 
 def flush() -> None:
@@ -121,6 +180,7 @@ __all__ = [
     "get_client",
     "is_enabled",
     "observe",
+    "propagate_attributes",
     "update_current_generation",
     "update_current_trace",
 ]

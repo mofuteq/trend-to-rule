@@ -51,6 +51,10 @@ for env_path in ENV_CANDIDATES:
     if env_path.is_file():
         load_dotenv(env_path)
 
+DEFAULT_TEMPERATURE: float = 0.2
+DEFAULT_TOP_P: float = 0.6
+DEFAULT_SEED: int = 42
+
 DEFAULT_API_KEY = os.getenv("GEMINI_API_KEY", "")
 DEFAULT_OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 DEFAULT_OPENAI_BASE_URL = os.getenv(
@@ -83,9 +87,9 @@ def create(
     api_key: str | None = None,
     openai_api_key: str | None = None,
     openai_base_url: str | None = None,
-    temperature: float = 0.2,
-    top_p: float = 0.6,
-    seed: int = 42,
+    temperature: float = DEFAULT_TEMPERATURE,
+    top_p: float = DEFAULT_TOP_P,
+    seed: int = DEFAULT_SEED,
     reasoning_effort: Literal["low", "medium",
                               "high"] = DEFAULT_OPENAI_REASONING_EFFORT,
     system_prompt: str | None = None,

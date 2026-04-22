@@ -39,7 +39,6 @@ class AppConfig:
     vector_model_name: str
     vector_device: str
     vector_candidate_k: int
-    vector_qdrant_path: Path | None
     vector_qdrant_url: str
     vector_per_query_top_k: int
     vector_mmr_diversity: float
@@ -55,23 +54,22 @@ def load_app_config() -> AppConfig:
     Returns:
         AppConfig: Parsed runtime configuration.
     """
-    vector_qdrant_path_raw = os.getenv("VECTOR_QDRANT_PATH", "").strip()
-    vector_qdrant_path = (
-        resolve_project_path(vector_qdrant_path_raw)
-        if vector_qdrant_path_raw
-        else None
-    )
     return AppConfig(
-        db_path=resolve_project_path(os.getenv("CHAT_DB_PATH", ".data/chat_db")),
+        db_path=resolve_project_path(
+            os.getenv("CHAT_DB_PATH", ".data/chat_db")
+        ),
         chat_db_name="chat_db",
         user_db_name="user_db",
         chat_meta_db_name="chat_meta_db",
-        vector_collection=os.getenv("VECTOR_COLLECTION", "article_markdown_bge_m3"),
+        vector_collection=os.getenv(
+            "VECTOR_COLLECTION", "article_markdown_bge_m3"
+        ),
         vector_model_name=os.getenv("VECTOR_MODEL_NAME", "BAAI/bge-m3"),
         vector_device=os.getenv("VECTOR_DEVICE", "auto"),
         vector_candidate_k=int(os.getenv("VECTOR_CANDIDATE_K", "50")),
-        vector_qdrant_path=vector_qdrant_path,
-        vector_qdrant_url=os.getenv("VECTOR_QDRANT_URL", "http://localhost:6333"),
+        vector_qdrant_url=os.getenv(
+            "VECTOR_QDRANT_URL", "http://localhost:6333"
+        ),
         vector_per_query_top_k=int(os.getenv("VECTOR_PER_QUERY_TOP_K", "5")),
         vector_mmr_diversity=float(os.getenv("VECTOR_MMR_DIVERSITY", "0.3")),
         app_log_level=os.getenv("APP_LOG_LEVEL", "INFO").upper(),

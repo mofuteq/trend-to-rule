@@ -16,6 +16,7 @@ def init_session_state() -> None:
     st.session_state.setdefault("chat_id", "")
     st.session_state.setdefault("loaded_chat_id", "")
     st.session_state.setdefault("pending_delete_chat_id", "")
+    st.session_state.setdefault("chat_turn", 0)
     st.session_state.setdefault("vector_searcher", None)
     st.session_state.setdefault("vector_error", "")
     if not isinstance(st.session_state.chat_id, str):
@@ -153,6 +154,7 @@ def start_new_chat_session(chat_id: str) -> None:
     st.session_state.chat_id = chat_id
     st.session_state.loaded_chat_id = ""
     st.session_state.last_user_goal = ""
+    st.session_state.chat_turn = 0
     st.session_state.messages = []
     st.session_state.history = []
 

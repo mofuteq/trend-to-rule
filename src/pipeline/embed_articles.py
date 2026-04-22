@@ -43,12 +43,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--input-lmdb", type=Path,
                         default=INPUT_LMDB, help="Input extracted LMDB path")
-    parser.add_argument(
-        "--qdrant-path",
-        type=Path,
-        default=None,
-        help="Use local persistent Qdrant at this path (prioritized over --qdrant-url)",
-    )
     parser.add_argument("--qdrant-url", type=str,
                         default=DEFAULT_QDRANT_URL, help="Qdrant endpoint URL")
     parser.add_argument("--qdrant-api-key", type=str,
@@ -88,17 +82,6 @@ def parse_args() -> argparse.Namespace:
     )
     return parser.parse_args()
 
-
-def validate_qdrant_args(args: argparse.Namespace) -> None:
-    """Validate qdrant path/url argument combinations."""
-    if args.qdrant_path is None:
-        return
-    raw_path = str(args.qdrant_path).strip()
-    if "://" in raw_path or raw_path.startswith("http:") or raw_path.startswith("https:"):
-        raise ValueError(
-            "--qdrant-path expects a local directory path, but got a URL-like value: "
-            f"{raw_path}. Use --qdrant-url for endpoints such as http://localhost:6333."
-        )
 
 
 def iter_lmdb(path: Path):
@@ -517,7 +500,6 @@ def update_payload_only(
 def main() -> None:
     """Run embedding pipeline from LMDB to Qdrant."""
     args = parse_args()
-    validate_qdrant_args(args)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s - %(message)s",
@@ -526,20 +508,12 @@ def main() -> None:
     logger.info("embedding_device=%s", device)
     logger.info("embedding_model=%s", args.model_name)
 
-    qdrant_mode = "remote"
     qdrant_url = normalize_qdrant_url(args.qdrant_url)
-    qdrant_path = args.qdrant_path
-    if qdrant_path:
-        qdrant_mode = "local"
-        qdrant_path.mkdir(parents=True, exist_ok=True)
-        logger.info("qdrant_mode=local qdrant_path=%s", qdrant_path)
-        client = QdrantClient(path=str(qdrant_path))
-    else:
-        logger.info("qdrant_mode=remote qdrant_url=%s", qdrant_url)
-        client = QdrantClient(
-            url=qdrant_url,
-            api_key=args.qdrant_api_key or None,
-        )
+    logger.info("qdrant_url=%s", qdrant_url)
+    client = QdrantClient(
+        url=qdrant_url,
+        api_key=args.qdrant_api_key or None,
+    )
 
     if args.update_payload_only:
         if not client.collection_exists(collection_name=args.collection):
@@ -611,7 +585,7 @@ def main() -> None:
             updated_records,
             updated_chunks,
             skipped_missing_chunks,
-            qdrant_path if qdrant_mode == "local" else qdrant_url,
+            qdrant_url,
         )
         return
 
@@ -733,7 +707,7 @@ def main() -> None:
         embedded_chunks,
         skipped_existing_records,
         skipped_existing_chunks,
-        qdrant_path if qdrant_mode == "local" else qdrant_url,
+        qdrant_url,
         args.model_name,
     )
 

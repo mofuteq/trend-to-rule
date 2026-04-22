@@ -55,7 +55,6 @@ def setup_vector_search_ui(
     vector_collection: str,
     vector_model_name: str,
     vector_device: str,
-    vector_qdrant_path: Path | None,
     vector_qdrant_url: str,
 ) -> None:
     """Initialize vector search lazily (always enabled)."""
@@ -82,7 +81,6 @@ def setup_vector_search_ui(
                 model_name=vector_model_name,
                 device=vector_device,
                 collection=vector_collection,
-                qdrant_path=vector_qdrant_path,
                 qdrant_url=vector_qdrant_url,
             )
             st.session_state.vector_error = ""

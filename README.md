@@ -211,7 +211,6 @@ OPENAI_MODEL=gemma4:e4b
 OPENAI_REASONING_EFFORT=low
 
 VECTOR_QDRANT_URL=http://localhost:6333
-VECTOR_QDRANT_PATH=
 VECTOR_COLLECTION=article_markdown_bge_m3
 VECTOR_MODEL_NAME=BAAI/bge-m3
 VECTOR_DEVICE=auto
@@ -236,8 +235,7 @@ Notes:
 - `OPENAI_BASE_URL`: Default OpenAI-compatible endpoint. Example: Ollama at `http://localhost:11434/v1`.
 - `OPENAI_MODEL`: Default non-Gemini model name.
 - `OPENAI_REASONING_EFFORT`: Default reasoning level for non-Gemini models. Supported values are `low`, `medium`, and `high`.
-- `VECTOR_QDRANT_URL`: Qdrant endpoint used by the Streamlit app when `VECTOR_QDRANT_PATH` is empty.
-- `VECTOR_QDRANT_PATH`: Optional filesystem path for local embedded Qdrant. Leave empty to use `VECTOR_QDRANT_URL`.
+- `VECTOR_QDRANT_URL`: Qdrant endpoint URL (default: `http://localhost:6333`).
 - `SEARXNG_BASE_URL`: Optional SearXNG endpoint for app-side web search integration.
 - `SEARXNG_IMAGE_LIMIT`: Maximum number of deduplicated image results rendered by the app.
 - `CHAT_DB_PATH`: LMDB path for chat history and session metadata.
@@ -391,23 +389,9 @@ uv run src/pipeline/embed_articles.py \
   --recreate
 ```
 
-### Example: Local Qdrant path
-
-```bash
-uv run src/pipeline/embed_articles.py \
-  --input-lmdb .data/article_db \
-  --collection article_markdown_bge_m3 \
-  --qdrant-path .data/qdrant_data \
-  --batch-size 32 \
-  --device auto \
-  --interval 0.5 \
-  --recreate
-```
-
 ### Main options
 
 - `--input-lmdb`: Input extracted LMDB path (default: `.data/article_db`)
-- `--qdrant-path`: Local persistent Qdrant path (prioritized over `--qdrant-url`)
 - `--qdrant-url`: Qdrant endpoint URL (default: `http://localhost:6333`)
 - `--qdrant-api-key`: Qdrant API key
 - `--collection`: Target Qdrant collection name
@@ -422,9 +406,7 @@ uv run src/pipeline/embed_articles.py \
 
 ### Notes
 
-- Use `--qdrant-url http://localhost:6333` when running Qdrant via Docker Compose.
-- Use `--qdrant-path .data/qdrant_data` for local filesystem persistence.
-- `--qdrant-path` must be a local directory path.
+- Requires Qdrant running via Docker Compose. Use `--qdrant-url http://localhost:6333` (default).
 - Payload includes metadata such as `published_ts` and `ingested_ts` (Unix time).
 
 ---

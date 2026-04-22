@@ -43,12 +43,6 @@ def parse_args() -> argparse.Namespace:
         choices=["auto", "mps", "cpu", "cuda"],
         help="Embedding device. 'auto' prefers mps on Mac, then cuda, then cpu.",
     )
-    parser.add_argument(
-        "--qdrant-path",
-        type=Path,
-        default=DATA_DIR / "qdrant_data",
-        help="Local persistent Qdrant path (prioritized over --qdrant-url)",
-    )
     parser.add_argument("--qdrant-url", type=str, default=DEFAULT_QDRANT_URL, help="Qdrant URL")
     parser.add_argument("--qdrant-api-key", type=str, default="", help="Qdrant API key")
     parser.add_argument("--no-mmr", action="store_true", help="Disable MMR reranking")
@@ -201,14 +195,12 @@ class HybridVectorSearcher:
         model_name: str = DEFAULT_MODEL_NAME,
         device: str = "auto",
         collection: str = DEFAULT_COLLECTION,
-        qdrant_path: Path | None = DATA_DIR / "qdrant_data",
         qdrant_url: str = DEFAULT_QDRANT_URL,
         qdrant_api_key: str = "",
     ) -> None:
         self.model_name = model_name
         self.device = resolve_device(device)
         self.collection = collection
-        self.qdrant_path = qdrant_path
         self.qdrant_url = qdrant_url
         self.qdrant_api_key = qdrant_api_key
         self._model: BGEM3FlagModel | None = None
@@ -227,14 +219,9 @@ class HybridVectorSearcher:
     def _get_client(self) -> QdrantClient:
         """Lazy-initialize qdrant client."""
         if self._client is None:
-            if self.qdrant_path:
-                self.qdrant_path.mkdir(parents=True, exist_ok=True)
-                self._client = QdrantClient(path=str(self.qdrant_path))
-                logger.info("qdrant_mode=local path=%s", self.qdrant_path)
-            else:
-                qurl = normalize_qdrant_url(self.qdrant_url)
-                self._client = QdrantClient(url=qurl, api_key=self.qdrant_api_key or None)
-                logger.info("qdrant_mode=remote url=%s", qurl)
+            qurl = normalize_qdrant_url(self.qdrant_url)
+            self._client = QdrantClient(url=qurl, api_key=self.qdrant_api_key or None)
+            logger.info("qdrant_url=%s", qurl)
         return self._client
 
     def _encode_query(self, query_text: str) -> tuple[list[float], models.SparseVector]:
@@ -463,7 +450,6 @@ def main() -> None:
         model_name=args.model_name,
         device=args.device,
         collection=args.collection,
-        qdrant_path=args.qdrant_path,
         qdrant_url=args.qdrant_url,
         qdrant_api_key=args.qdrant_api_key,
     )
