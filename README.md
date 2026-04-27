@@ -630,31 +630,43 @@ These additions aim to strengthen both the product value of the system and the c
 
 ## Model Handling
 
-`create()` in `src/services/chat.py` switches backend based on the `model` string.
+`create()` in `src/services/llm_client.py` routes all LLM calls through [Pydantic AI](https://ai.pydantic.dev/), regardless of whether the backend is Gemini or an OpenAI-compatible endpoint.
 
 The architecture is intentionally model-agnostic. Lightweight models can be used for most stages of the pipeline to keep latency low, while stronger reasoning models can be swapped into structural synthesis stages if deeper reasoning is required.
 
-- If `model` contains `gemini`: use the Gemini SDK.
-- Otherwise: use an OpenAI-compatible SDK endpoint (for example, an Ollama-compatible endpoint).
+### Backend Selection
+
+Selection is based on the `model` string passed to `create()`:
+
+- If `model` contains `gemini`: calls are routed through `GoogleModel` + `GoogleProvider` (Gemini API key auth).
+- Otherwise: calls are routed through `OpenAIModel` + `OpenAIProvider` (OpenAI-compatible endpoint, e.g. Ollama).
+
+### Structured vs Unstructured Output
+
+- When `response_model` is supplied, Pydantic AI's `output_type` enforces the schema and returns a typed Pydantic model instance directly.
+- When `response_model` is omitted, `create()` returns a `SimpleNamespace` with a `.text` attribute containing the plain-text response string.
+
+### Thinking / Reasoning Configuration
+
+- **Gemini**: thinking budget is mapped from `reasoning_effort` via `GoogleModelSettings.google_thinking_config` with budgets of 512 / 1024 / 2048 tokens for `low` / `medium` / `high`.
+- **OpenAI-compatible**: `reasoning_effort` is forwarded as `OpenAIModelSettings.openai_reasoning_effort`. If the model rejects this parameter (HTTP 400), the call is automatically retried without it, and that model name is cached in-process so subsequent calls skip `reasoning_effort` from the first attempt.
+
+### Langfuse Tracing
+
+Langfuse `generation` spans are written by the existing `tracing` helpers (`@tracing.observe`, `tracing.update_current_generation`). Pydantic AI's own auto-instrumentation (`Agent.instrument_all()`) is intentionally not enabled here to avoid duplicate spans under the existing `chat_turn` trace structure.
 
 ### OpenAI-Compatible Defaults
 
 - `OPENAI_BASE_URL`: `http://localhost:11434/v1`
 - `OPENAI_MODEL`: `gemma4:e4b`
-- `OPENAI_REASONING_EFFORT`: `medium`
+- `OPENAI_REASONING_EFFORT`: `low`
 
 `create()` also supports the following runtime parameters (with defaults):
 
 - `temperature=0.2`
 - `top_p=0.6`
 - `seed=42`
-- `reasoning_effort="medium"`
-
-
-### Behavior For Models Without `reasoning_effort` Support
-
-If a model returns HTTP 400 because it does not support `reasoning_effort`, the request is automatically retried without `reasoning_effort`.  
-That model is then cached in-process as unsupported, so subsequent calls skip `reasoning_effort` from the first attempt.
+- `reasoning_effort="low"`
 
 ---
 

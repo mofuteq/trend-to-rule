@@ -266,7 +266,7 @@ def _create_with_gemini(
 
     if response_model:
         return output
-    return SimpleNamespace(text=output)
+    return SimpleNamespace(text=str(output))
 
 
 def _update_gemini_generation(
@@ -404,7 +404,7 @@ def _create_with_openai(
 
     if response_model:
         return output
-    return SimpleNamespace(text=output)
+    return SimpleNamespace(text=str(output))
 
 
 def _update_openai_generation(
