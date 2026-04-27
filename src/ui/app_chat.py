@@ -58,6 +58,8 @@ def render_image_results(image_results: list[ImageSearchResult]) -> None:
                     st.markdown(f"**[{title}]({item.page_url})**")
                 else:
                     st.markdown(f"**{title}**")
+                if item.clip_score is not None:
+                    st.caption(f"CLIP similarity: {item.clip_score:.3f}")
                 if item.thumbnail_url or item.image_url:
                     image_src = item.thumbnail_url or item.image_url
                     if item.image_url:

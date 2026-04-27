@@ -2768,6 +2768,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "qdrant-client" },
+    { name = "sentence-transformers" },
     { name = "streamlit" },
     { name = "transformers" },
 ]
@@ -2785,6 +2786,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.11.7" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "qdrant-client", specifier = ">=1.17.0" },
+    { name = "sentence-transformers", specifier = ">=5.2.3" },
     { name = "streamlit", specifier = ">=1.55.0" },
     { name = "transformers", specifier = "==4.57.6" },
 ]

@@ -1,19 +1,28 @@
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 import torch
-from FlagEmbedding import BGEM3FlagModel
 from qdrant_client import QdrantClient, models
 
 SRC_DIR = Path(__file__).resolve().parents[1]
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from core.hf_cache import (
+    clear_huggingface_model_cache,
+    clear_incomplete_huggingface_downloads,
+    configure_huggingface_cache,
+)
 from core.text_utils import normalize_text_nfkc
+
+configure_huggingface_cache()
+
+from FlagEmbedding import BGEM3FlagModel
 
 
 logger = logging.getLogger(__name__)
@@ -35,7 +44,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--collection", type=str, default=DEFAULT_COLLECTION, help="Qdrant collection")
     parser.add_argument("--top-k", type=int, default=10, help="Final result count")
     parser.add_argument("--candidate-k", type=int, default=40, help="Candidate pool size before MMR")
-    parser.add_argument("--model-name", type=str, default=DEFAULT_MODEL_NAME, help="Embedding model name")
+    parser.add_argument(
+        "--model-name",
+        type=str,
+        default=os.getenv("VECTOR_MODEL_NAME", DEFAULT_MODEL_NAME),
+        help="Embedding model name or local model path",
+    )
     parser.add_argument(
         "--device",
         type=str,
@@ -82,6 +96,16 @@ def normalize_qdrant_url(raw_url: str) -> str:
         raise ValueError(f"invalid qdrant url host: {parsed.hostname}")
     port_part = f":{parsed.port}" if parsed.port else ""
     return f"{parsed.scheme}://{parsed.hostname}{port_part}"
+
+
+def _is_recoverable_huggingface_cache_error(err: Exception) -> bool:
+    """Return True when a model load error likely came from corrupt HF cache."""
+    message = str(err)
+    return (
+        ".incomplete" in message
+        or "Unable to load weights from pytorch checkpoint file" in message
+        or ("pytorch_model.bin" in message and "from_tf=True" in message)
+    )
 
 
 def stable_index(token: str) -> int:
@@ -211,10 +235,39 @@ class HybridVectorSearcher:
         if self._model is None:
             logger.info("device=%s model=%s", self.device, self.model_name)
             try:
-                self._model = BGEM3FlagModel(self.model_name, use_fp16=False, devices=[self.device])
-            except TypeError:
-                self._model = BGEM3FlagModel(self.model_name, use_fp16=False)
+                self._model = self._load_model()
+            except Exception as err:
+                if not _is_recoverable_huggingface_cache_error(err):
+                    raise
+                cache_root = configure_huggingface_cache()
+                removed_count = clear_incomplete_huggingface_downloads(
+                    cache_root,
+                    model_name=self.model_name,
+                )
+                removed_model_cache = clear_huggingface_model_cache(
+                    cache_root,
+                    model_name=self.model_name,
+                )
+                logger.warning(
+                    "cleared Hugging Face cache after model load failed: "
+                    "incomplete_downloads=%s model_cache_removed=%s error=%s",
+                    removed_count,
+                    removed_model_cache,
+                    err,
+                )
+                self._model = self._load_model()
         return self._model
+
+    def _load_model(self) -> BGEM3FlagModel:
+        """Load the configured embedding model."""
+        try:
+            return BGEM3FlagModel(
+                self.model_name,
+                use_fp16=False,
+                devices=[self.device],
+            )
+        except TypeError:
+            return BGEM3FlagModel(self.model_name, use_fp16=False)
 
     def _get_client(self) -> QdrantClient:
         """Lazy-initialize qdrant client."""

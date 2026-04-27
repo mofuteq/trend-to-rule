@@ -45,9 +45,16 @@ Explanation terms are not always retrieval terms.
 Abstract phrases such as `minimalism`, `sophisticated`, or `quality` may sound appropriate in a written explanation, but they often perform poorly as image-search queries.
 For visual retrieval, the system prioritizes concrete wardrobe and context terms such as item, material, silhouette, and usage context.
 
+Image candidates are reranked with a lightweight multilingual CLIP pair:
+`sentence-transformers/clip-ViT-B-32-multilingual-v1` embeds the rendered
+text query, while `sentence-transformers/clip-ViT-B-32` embeds image
+candidates in the same CLIP space. This keeps Japanese and other multilingual
+queries usable without replacing the fast image encoder used for visual
+similarity.
+
 Example:
 
-`rule -> ExampleQuerySpec -> rendered query -> SearXNG image search -> visual reference cards`
+`rule -> ExampleQuerySpec -> rendered query -> SearXNG image search -> multilingual CLIP rerank -> visual reference cards`
 
 This keeps the search step:
 
@@ -109,13 +116,20 @@ flowchart TD
     K --> M[generate_example_query_spec]
     M --> N[render_example_query]
     N --> O[search_visual_examples]
-    O --> E
+    O --> P[CLIP rerank image candidates]
+    P --> E
     E --> L[UI response + retrieval table + visual references]
 
     subgraph LLM Layer
       F
       K
       M
+    end
+
+    subgraph Visual Grounding
+      N
+      O
+      P
     end
 
     subgraph Storage
@@ -151,9 +165,7 @@ trend-to-rule/
 └── README.md
 ```
 
-Directory responsibilities:
-
-- `.data/`: Local runtime artifacts such as LMDB files, JSONL debug outputs, and chat state.
+- `.data/`: Local runtime artifacts such as LMDB files, JSONL debug outputs, chat state, Qdrant storage, logs, and shared Hugging Face model caches.
 - `docker-compose.yml`: Local multi-service runtime for the app, Qdrant, and SearXNG.
 - `searxng/`: Local SearXNG configuration used by Docker Compose.
 - `src/.env`: Local environment variables for app and pipeline runs.
@@ -218,7 +230,15 @@ VECTOR_CANDIDATE_K=50
 VECTOR_PER_QUERY_TOP_K=5
 VECTOR_MMR_DIVERSITY=0.3
 SEARXNG_BASE_URL=http://localhost:8008
-SEARXNG_IMAGE_LIMIT=5
+SEARXNG_IMAGE_FETCH_LIMIT=10
+SEARXNG_IMAGE_LIMIT=3
+CLIP_TEXT_MODEL_NAME=sentence-transformers/clip-ViT-B-32-multilingual-v1
+CLIP_IMAGE_MODEL_NAME=sentence-transformers/clip-ViT-B-32
+
+HF_HOME=.data/huggingface
+HF_HUB_CACHE=.data/huggingface/hub
+TRANSFORMERS_CACHE=.data/huggingface/hub
+SENTENCE_TRANSFORMERS_HOME=.data/huggingface/hub
 
 CHAT_DB_PATH=.data/chat_db
 APP_LOG_LEVEL=INFO
@@ -237,7 +257,11 @@ Notes:
 - `OPENAI_REASONING_EFFORT`: Default reasoning level for non-Gemini models. Supported values are `low`, `medium`, and `high`.
 - `VECTOR_QDRANT_URL`: Qdrant endpoint URL (default: `http://localhost:6333`).
 - `SEARXNG_BASE_URL`: Optional SearXNG endpoint for app-side web search integration.
-- `SEARXNG_IMAGE_LIMIT`: Maximum number of deduplicated image results rendered by the app.
+- `SEARXNG_IMAGE_FETCH_LIMIT`: Number of raw image candidates fetched from SearXNG before CLIP reranking.
+- `SEARXNG_IMAGE_LIMIT`: Number of final image cards shown after CLIP reranking.
+- `CLIP_TEXT_MODEL_NAME`: Hugging Face model ID, not a filesystem path. This Sentence Transformers model embeds rendered image-search text queries. The default multilingual CLIP text encoder supports Japanese and other non-English queries.
+- `CLIP_IMAGE_MODEL_NAME`: Hugging Face model ID, not a filesystem path. This Sentence Transformers model embeds image candidates in the same CLIP space as the text model.
+- `HF_HOME` / `HF_HUB_CACHE` / `TRANSFORMERS_CACHE` / `SENTENCE_TRANSFORMERS_HOME`: Shared Hugging Face cache paths. Keep `TRANSFORMERS_CACHE` and `SENTENCE_TRANSFORMERS_HOME` aligned with `HF_HUB_CACHE` so BGE-M3 and Sentence Transformers CLIP models are stored under the same hub cache root, for example `.data/huggingface/hub/models--sentence-transformers--clip-ViT-B-32`.
 - `CHAT_DB_PATH`: LMDB path for chat history and session metadata.
 - `APP_LOG_LEVEL`: Application log level such as `INFO` or `DEBUG`.
 - `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST`: Optional Langfuse tracing. Leave empty to disable. See [docs/langfuse.md](./docs/langfuse.md) for setup and the self-hosted Compose overlay.
@@ -275,7 +299,7 @@ Compose details:
 - The app connects to Qdrant over the Compose network using `http://qdrant:6333`.
 - The app can reach SearXNG over the Compose network using `http://searxng:8080`.
 - SearXNG is configured via [`searxng/settings.yml`](./searxng/settings.yml), allows `format=json` responses, and uses a non-default `server.secret_key`.
-- Local runtime data is mounted from `.data/` into the container at `/app/.data`.
+  - Local runtime data is mounted from `.data/` into the container at `/app/.data`, including Qdrant storage, logs, and shared Hugging Face model caches.
 - Environment variables are loaded from `src/.env` via `env_file`.
 
 All persistent state lives on the host under `.data/` (git-ignored). Qdrant uses `.data/qdrant/`; the optional Langfuse overlay uses `.data/langfuse/{postgres,clickhouse,clickhouse-logs,valkey,seaweedfs}/`.
@@ -287,6 +311,44 @@ docker compose -f docker-compose.yml -f docker-compose.langfuse.yml up -d
 ```
 
 See [docs/langfuse.md](./docs/langfuse.md) for setup, bootstrap, env vars, and the SeaweedFS-backed self-hosted stack.
+
+---
+
+## Hugging Face Cache Recovery
+
+The app stores downloaded embedding and CLIP models under `.data/huggingface`
+so local runs and Docker share the same model files. If a download is
+interrupted, vector search can fail with errors such as:
+
+This matters because large local models such as `BAAI/bge-m3` and the CLIP
+encoders are part of the local product runtime, not disposable test fixtures.
+Keeping the cache under `.data/` prevents repeated downloads across local and
+container runs and keeps model state visible alongside the rest of the
+self-hosted stack.
+
+- `No such file or directory: ... .incomplete`
+- `Unable to load weights from pytorch checkpoint file ... pytorch_model.bin`
+
+Vector search now attempts one automatic recovery: it removes interrupted
+downloads or the affected model cache directory, then retries the model load so
+Hugging Face can download a clean copy.
+
+If the app is already running and keeps using an old in-process model state,
+restart the app container:
+
+```bash
+docker compose restart app
+```
+
+For manual cleanup, remove only the affected model cache directory:
+
+```bash
+rm -rf .data/huggingface/hub/models--BAAI--bge-m3
+docker compose restart app
+```
+
+The next vector search will redownload `BAAI/bge-m3`, so the first request can
+take longer than usual.
 
 ---
 
@@ -545,6 +607,7 @@ External search is treated as infrastructure:
 
 - queries are generated explicitly
 - search backends are replaceable
+- image candidates are reranked explicitly with CLIP similarity
 - retrieved examples remain observable to the user
 
 This makes it easier to inspect failures, tune query rendering, and avoid vendor-locked hidden retrieval behavior.
@@ -555,7 +618,7 @@ Planned improvements include:
 
 - Better claim-level extraction precision and robustness
 - Improved retrieval ranking for canonical vs emerging separation
-- Better visual grounding and query rendering for example retrieval
+- Better visual grounding evaluation and query rendering for example retrieval
 - Observability-driven iteration using Langfuse traces and structured intermediate artifacts
 - A separate generalized evaluation repository for benchmarking structural reasoning against simpler retrieval baselines
 

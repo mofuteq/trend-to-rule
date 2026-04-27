@@ -19,7 +19,7 @@ from services.chat import (
     generate_decision_support,
     generate_query,
 )
-from services.image_search import ImageSearchResult, search_images
+from services.image_search import ImageSearchResult, search_and_rerank_images
 
 logger = logging.getLogger(__name__)
 
@@ -167,10 +167,17 @@ def generate_assistant_response(
 
     image_results: list[ImageSearchResult] = []
     try:
-        image_results = search_images(
+        logger.info(
+            "image_search_start query=%r fetch_limit=%s final_limit=%s",
             image_query,
-            limit=config.searxng_image_limit,
+            config.searxng_image_fetch_limit,
+            config.searxng_image_limit,
+        )
+        image_results = search_and_rerank_images(
+            image_query,
             base_url=config.searxng_base_url,
+            fetch_limit=config.searxng_image_fetch_limit,
+            rerank_limit=config.searxng_image_limit,
         )
     except Exception as err:
         logger.warning("Image search failed: %s", err)

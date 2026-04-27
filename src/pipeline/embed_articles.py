@@ -16,14 +16,17 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 from qdrant_client import QdrantClient, models
-from FlagEmbedding import BGEM3FlagModel
 
 SRC_DIR = Path(__file__).resolve().parents[1]
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
-    from services.chat import infer_attribute
-else:
-    from services.chat import infer_attribute
+
+from core.hf_cache import configure_huggingface_cache
+from services.chat import infer_attribute
+
+configure_huggingface_cache()
+
+from FlagEmbedding import BGEM3FlagModel
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / ".data"
@@ -52,7 +55,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--collection", type=str,
                         default=DEFAULT_COLLECTION, help="Qdrant collection name")
     parser.add_argument("--model-name", type=str,
-                        default=DEFAULT_MODEL_NAME, help="FlagEmbedding model name")
+                        default=os.getenv("VECTOR_MODEL_NAME", DEFAULT_MODEL_NAME),
+                        help="FlagEmbedding model name or local model path")
     parser.add_argument(
         "--device",
         type=str,

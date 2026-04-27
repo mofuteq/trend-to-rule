@@ -4,12 +4,15 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from core.hf_cache import configure_huggingface_cache
+
 
 SRC_ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = SRC_ROOT.parent
 ENV_PATH = SRC_ROOT / ".env"
 if ENV_PATH.is_file():
     load_dotenv(ENV_PATH)
+configure_huggingface_cache()
 
 
 def resolve_project_path(raw_path: str) -> Path:
@@ -44,6 +47,7 @@ class AppConfig:
     vector_mmr_diversity: float
     app_log_level: str
     searxng_base_url: str
+    searxng_image_fetch_limit: int
     searxng_image_limit: int
     anonymous_user_query_key: str
 
@@ -74,6 +78,9 @@ def load_app_config() -> AppConfig:
         vector_mmr_diversity=float(os.getenv("VECTOR_MMR_DIVERSITY", "0.3")),
         app_log_level=os.getenv("APP_LOG_LEVEL", "INFO").upper(),
         searxng_base_url=os.getenv("SEARXNG_BASE_URL", "http://localhost:8008"),
+        searxng_image_fetch_limit=int(
+            os.getenv("SEARXNG_IMAGE_FETCH_LIMIT", "10")
+        ),
         searxng_image_limit=int(os.getenv("SEARXNG_IMAGE_LIMIT", "3")),
         anonymous_user_query_key="uid",
     )
