@@ -113,8 +113,8 @@ flowchart TD
 
     I --> J[extract_claims]
     J -->|canonical_claims / emerging_claims| K[extract_structured_draft]
-    K --> L1[generate_decision_support]
-    L1 --> M[generate_example_query_spec]
+    K --> DS[generate_decision_support]
+    DS --> M[generate_example_query_spec]
     M --> N[render_example_query]
     N --> O[search_visual_examples]
     O --> P[CLIP rerank image candidates]
@@ -124,7 +124,7 @@ flowchart TD
     subgraph LLM Layer
       F
       K
-      L1
+      DS
       M
     end
 
