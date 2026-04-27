@@ -113,7 +113,8 @@ flowchart TD
 
     I --> J[extract_claims]
     J -->|canonical_claims / emerging_claims| K[extract_structured_draft]
-    K --> M[generate_example_query_spec]
+    K --> L1[generate_decision_support]
+    L1 --> M[generate_example_query_spec]
     M --> N[render_example_query]
     N --> O[search_visual_examples]
     O --> P[CLIP rerank image candidates]
@@ -123,6 +124,7 @@ flowchart TD
     subgraph LLM Layer
       F
       K
+      L1
       M
     end
 
@@ -299,7 +301,7 @@ Compose details:
 - The app connects to Qdrant over the Compose network using `http://qdrant:6333`.
 - The app can reach SearXNG over the Compose network using `http://searxng:8080`.
 - SearXNG is configured via [`searxng/settings.yml`](./searxng/settings.yml), allows `format=json` responses, and uses a non-default `server.secret_key`.
-  - Local runtime data is mounted from `.data/` into the container at `/app/.data`, including Qdrant storage, logs, and shared Hugging Face model caches.
+- Local runtime data is mounted from `.data/` into the container at `/app/.data`, including Qdrant storage, logs, and shared Hugging Face model caches.
 - Environment variables are loaded from `src/.env` via `env_file`.
 
 All persistent state lives on the host under `.data/` (git-ignored). Qdrant uses `.data/qdrant/`; the optional Langfuse overlay uses `.data/langfuse/{postgres,clickhouse,clickhouse-logs,valkey,seaweedfs}/`.
@@ -320,14 +322,14 @@ The app stores downloaded embedding and CLIP models under `.data/huggingface`
 so local runs and Docker share the same model files. If a download is
 interrupted, vector search can fail with errors such as:
 
+- `No such file or directory: ... .incomplete`
+- `Unable to load weights from pytorch checkpoint file ... pytorch_model.bin`
+
 This matters because large local models such as `BAAI/bge-m3` and the CLIP
 encoders are part of the local product runtime, not disposable test fixtures.
 Keeping the cache under `.data/` prevents repeated downloads across local and
 container runs and keeps model state visible alongside the rest of the
 self-hosted stack.
-
-- `No such file or directory: ... .incomplete`
-- `Unable to load weights from pytorch checkpoint file ... pytorch_model.bin`
 
 Vector search now attempts one automatic recovery: it removes interrupted
 downloads or the affected model cache directory, then retries the model load so
