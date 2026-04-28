@@ -21,7 +21,7 @@ from services.chat_workflow import (
 )
 from services.image_search import ImageSearchResult
 from storage.chat_db import ChatDB
-from ui.app_state import add_message, get_chat_meta, set_chat_title
+from ui.app_state import add_message, get_chat_meta, set_chat_title, set_last_user_goal
 
 logger = logging.getLogger(__name__)
 ASSISTANT_AVATAR = ":material/auto_awesome:"
@@ -230,6 +230,12 @@ def process_user_prompt(
             except Exception as err:
                 logger.warning("Failed to generate chat title: %s", err)
         st.session_state.last_user_goal = user_needs.user_goal
+        set_last_user_goal(
+            chat_id=st.session_state.chat_id,
+            last_user_goal=user_needs.user_goal,
+            chat_db=chat_db,
+            chat_meta_db_name=config.chat_meta_db_name,
+        )
         if st.session_state.chat_id not in user_chat_ids:
             user_chat_ids.append(st.session_state.chat_id)
             chat_db.put(key=user_id, value=user_chat_ids,
