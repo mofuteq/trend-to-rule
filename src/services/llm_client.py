@@ -1,36 +1,31 @@
 """Low-level LLM client utilities for Gemini and OpenAI-compatible backends."""
 
-import json
 import logging
 import os
-import re
 import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal, Sequence, TypeVar
 
 from dotenv import load_dotenv
-from google import genai
-from google.genai.types import (
-    Content,
-    GenerateContentConfig,
-    GenerateContentResponse,
-    Part,
-    ThinkingConfig,
-)
-from openai import OpenAI
+from google.genai.types import Content, ThinkingConfigDict
 from pydantic import BaseModel
+from pydantic_ai import Agent, AgentRunResult
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    UserPromptPart,
+)
+from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+from pydantic_ai.models.openai import OpenAIModel, OpenAIModelSettings
+from pydantic_ai.providers.google import GoogleProvider
+from pydantic_ai.providers.openai import OpenAIProvider
 
-from core.text_utils import normalize_text_nfkc
 from services import tracing
 
-try:
-    import json5
-except ImportError:
-    json5 = None  # type: ignore[assignment]
-
 logger = logging.getLogger(__name__)
-
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 ModelName = Literal[
@@ -82,6 +77,33 @@ def _is_resource_exhausted_error(err: Exception) -> bool:
     )
 
 
+def _is_reasoning_effort_unsupported_error(err: Exception) -> bool:
+    """Return True when server rejects reasoning_effort/thinking options."""
+    msg = str(err).lower()
+    return (
+        "reasoning_effort" in msg
+        or "think value" in msg
+        or "does not support thinking" in msg
+        or "not support thinking" in msg
+        or "not supported for this model" in msg
+    )
+
+
+def _content_to_pai_messages(history: list[Content]) -> list[ModelMessage]:
+    """Convert Google Content history to Pydantic AI ModelMessage list."""
+    messages: list[ModelMessage] = []
+    for item in history:
+        text_parts = [getattr(p, "text", None) for p in (item.parts or [])]
+        text = "\n".join(t for t in text_parts if t).strip()
+        if not text:
+            continue
+        if item.role == "user":
+            messages.append(ModelRequest(parts=[UserPromptPart(content=text)]))
+        else:
+            messages.append(ModelResponse(parts=[TextPart(content=text)]))
+    return messages
+
+
 def create(
     user_prompt: str,
     api_key: str | None = None,
@@ -101,8 +123,8 @@ def create(
         "gemini-2.5-flash-lite",
         "gemini-3.1-flash-lite-preview",
     ),
-) -> ModelT | GenerateContentResponse | Any:
-    """Send a message via Gemini or OpenAI-compatible backend.
+) -> ModelT | SimpleNamespace | Any:
+    """Send a message via Gemini or OpenAI-compatible backend using Pydantic AI.
 
     Args:
         user_prompt: User prompt text.
@@ -120,7 +142,7 @@ def create(
         fallback_models: Retry models after the primary Gemini model fails.
 
     Returns:
-        Parsed Pydantic model, backend response object, or namespace with `.text`.
+        Parsed Pydantic model, or SimpleNamespace with `.text` for plain text.
     """
     if not user_prompt:
         raise ValueError("user_prompt is required")
@@ -170,47 +192,41 @@ def _create_with_gemini(
     history: list[Content] | None,
     model: str,
     fallback_models: Sequence[ModelName],
-) -> ModelT | GenerateContentResponse:
-    """Create response using Gemini SDK backend."""
-    client = genai.Client(api_key=api_key)
-    thinking_config = ThinkingConfig(
-        thinking_budget=GEMINI_THINKING_BUDGET_BY_REASONING_EFFORT[reasoning_effort]
-    )
-    contents = [Content(role="user", parts=[Part(text=user_prompt)])]
-    if response_model:
-        config = GenerateContentConfig(
-            system_instruction=system_prompt if system_prompt else None,
-            response_mime_type="application/json",
-            response_json_schema=response_model.model_json_schema(),
-            temperature=temperature,
-            top_p=top_p,
-            seed=seed,
-            thinking_config=thinking_config,
-        )
-    else:
-        config = GenerateContentConfig(
-            system_instruction=system_prompt if system_prompt else None,
-            temperature=temperature,
-            top_p=top_p,
-            seed=seed,
-            thinking_config=thinking_config,
-        )
+) -> ModelT | SimpleNamespace:
+    """Create response using Pydantic AI Google backend."""
+    thinking_budget = GEMINI_THINKING_BUDGET_BY_REASONING_EFFORT[reasoning_effort]
+    model_settings: GoogleModelSettings = {
+        "temperature": temperature,
+        "top_p": top_p,
+        "seed": seed,
+        "google_thinking_config": ThinkingConfigDict(
+            thinking_budget=thinking_budget
+        ),
+    }
 
-    model_candidates: list[str] = []
-    for model_name in (model, *fallback_models):
-        if model_name not in model_candidates:
-            model_candidates.append(model_name)
+    pai_history = _content_to_pai_messages(history or [])
+    model_candidates: list[str] = list(dict.fromkeys([model, *fallback_models]))
 
-    res: GenerateContentResponse | None = None
+    run_result: AgentRunResult[Any] | None = None
     selected_model = model
     last_error: Exception | None = None
+
     for idx, candidate_model in enumerate(model_candidates):
         selected_model = candidate_model
         try:
-            res = client.models.generate_content(
-                model=selected_model,
-                contents=(history + contents) if history else contents,
-                config=config,
+            pai_model = GoogleModel(
+                candidate_model,
+                provider=GoogleProvider(api_key=api_key),
+            )
+            agent: Agent[None, Any] = Agent(
+                model=pai_model,
+                output_type=response_model or str,
+                system_prompt=system_prompt or "",
+            )
+            run_result = agent.run_sync(
+                user_prompt,
+                message_history=pai_history or None,
+                model_settings=model_settings,
             )
             break
         except Exception as err:
@@ -225,8 +241,11 @@ def _create_with_gemini(
             )
             if not _is_resource_exhausted_error(err):
                 time.sleep(1)
-    if res is None and last_error is not None:
+
+    if run_result is None and last_error is not None:
         raise last_error
+
+    output = run_result.output  # type: ignore[union-attr]
     logger.info(
         "llm_response backend=gemini model=%s response_model=%s",
         selected_model,
@@ -237,7 +256,7 @@ def _create_with_gemini(
         model=selected_model,
         user_prompt=user_prompt,
         system_prompt=system_prompt,
-        response=res,
+        run_result=run_result,
         temperature=temperature,
         top_p=top_p,
         seed=seed,
@@ -246,28 +265,8 @@ def _create_with_gemini(
     )
 
     if response_model:
-        res = response_model.model_validate(res.parsed)
-    return res
-
-
-def _extract_gemini_usage(response: GenerateContentResponse) -> dict[str, int] | None:
-    """Extract token usage details from a Gemini response."""
-    usage = getattr(response, "usage_metadata", None)
-    if usage is None:
-        return None
-    input_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
-    output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0)
-    total_tokens = int(
-        getattr(usage, "total_token_count", 0)
-        or (input_tokens + output_tokens)
-    )
-    if not (input_tokens or output_tokens or total_tokens):
-        return None
-    return {
-        "input": input_tokens,
-        "output": output_tokens,
-        "total": total_tokens,
-    }
+        return output
+    return SimpleNamespace(text=str(output))
 
 
 def _update_gemini_generation(
@@ -275,7 +274,7 @@ def _update_gemini_generation(
     model: str,
     user_prompt: str,
     system_prompt: str | None,
-    response: GenerateContentResponse,
+    run_result: AgentRunResult[Any],
     temperature: float,
     top_p: float,
     seed: int,
@@ -285,15 +284,16 @@ def _update_gemini_generation(
     """Push input/output/usage info into the active Langfuse generation."""
     if not tracing.is_enabled():
         return
-    output_text: str = ""
-    try:
-        output_text = str(getattr(response, "text", "") or "")
-    except Exception:
-        output_text = ""
+    output = run_result.output
+    if response_model is not None and hasattr(output, "model_dump_json"):
+        output_value: Any = output.model_dump_json()
+    else:
+        output_value = str(output)
+
     update_kwargs: dict[str, Any] = {
         "model": model,
         "input": {"user_prompt": user_prompt, "system_prompt": system_prompt},
-        "output": output_text,
+        "output": output_value,
         "metadata": {
             "backend": "gemini",
             "temperature": temperature,
@@ -303,138 +303,14 @@ def _update_gemini_generation(
             "response_model": response_model.__name__ if response_model else None,
         },
     }
-    usage = _extract_gemini_usage(response)
-    if usage is not None:
-        update_kwargs["usage_details"] = usage
+    usage = run_result.usage()
+    if usage.input_tokens or usage.output_tokens:
+        update_kwargs["usage_details"] = {
+            "input": usage.input_tokens,
+            "output": usage.output_tokens,
+            "total": usage.total_tokens,
+        }
     tracing.update_current_generation(**update_kwargs)
-
-
-def _content_to_text(content: Content) -> str:
-    """Flatten Google Content parts into plain text."""
-    text_parts: list[str] = []
-    for part in content.parts or []:
-        text = getattr(part, "text", None)
-        if text:
-            text_parts.append(str(text))
-    return "\n".join(text_parts).strip()
-
-
-def _validate_response_model_from_text(response_model: type[ModelT], text: str) -> ModelT:
-    """Validate response model via JSON normalization pipeline."""
-    normalized_text = normalize_text_nfkc(text or "").strip()
-    fence = re.match(
-        r"^\s*```(?:json)?\s*\n(?P<body>[\s\S]*?)\n```\s*$",
-        normalized_text,
-        flags=re.IGNORECASE,
-    )
-    if fence:
-        normalized_text = fence.group("body").strip()
-
-    if json5 is not None:
-        normalized_obj = json5.loads(normalized_text)
-    else:
-        normalized_obj = json.loads(normalized_text)
-    strict_json = json.dumps(normalized_obj, ensure_ascii=False)
-    strict_obj = json.loads(strict_json)
-    return response_model.model_validate(strict_obj)
-
-
-def _is_reasoning_effort_unsupported_error(err: Exception) -> bool:
-    """Return True when server rejects reasoning_effort/thinking options."""
-    msg = str(err).lower()
-    return (
-        "reasoning_effort" in msg
-        or "think value" in msg
-        or "does not support thinking" in msg
-        or "not support thinking" in msg
-        or "not supported for this model" in msg
-    )
-
-
-def _chat_parse_with_reasoning_fallback(
-    client: OpenAI,
-    *,
-    model: str,
-    messages: list[dict[str, str]],
-    response_model: type[ModelT],
-    temperature: float,
-    top_p: float,
-    seed: int,
-    reasoning_effort: str,
-) -> Any:
-    """Call parse with reasoning_effort, retrying without it if unsupported."""
-    if model in REASONING_EFFORT_UNSUPPORTED_MODELS:
-        return client.chat.completions.parse(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            top_p=top_p,
-            seed=seed,
-            response_format=response_model,
-        )
-    try:
-        return client.chat.completions.parse(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            top_p=top_p,
-            seed=seed,
-            reasoning_effort=reasoning_effort,
-            response_format=response_model,
-        )
-    except Exception as err:
-        if not _is_reasoning_effort_unsupported_error(err):
-            raise
-        REASONING_EFFORT_UNSUPPORTED_MODELS.add(model)
-        return client.chat.completions.parse(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            top_p=top_p,
-            seed=seed,
-            response_format=response_model,
-        )
-
-
-def _chat_create_with_reasoning_fallback(
-    client: OpenAI,
-    *,
-    model: str,
-    messages: list[dict[str, str]],
-    temperature: float,
-    top_p: float,
-    seed: int,
-    reasoning_effort: str,
-) -> Any:
-    """Call create with reasoning_effort, retrying without it if unsupported."""
-    if model in REASONING_EFFORT_UNSUPPORTED_MODELS:
-        return client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            top_p=top_p,
-            seed=seed,
-        )
-    try:
-        return client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            top_p=top_p,
-            seed=seed,
-            reasoning_effort=reasoning_effort,
-        )
-    except Exception as err:
-        if not _is_reasoning_effort_unsupported_error(err):
-            raise
-        REASONING_EFFORT_UNSUPPORTED_MODELS.add(model)
-        return client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            top_p=top_p,
-            seed=seed,
-        )
 
 
 @tracing.observe(as_type="generation", name="openai_generation")
@@ -451,24 +327,63 @@ def _create_with_openai(
     response_model: type[ModelT] | None,
     history: list[Content] | None,
     model: str,
-) -> ModelT | Any:
-    """Create response using OpenAI-compatible SDK backend."""
+) -> ModelT | SimpleNamespace:
+    """Create response using Pydantic AI OpenAI-compatible backend."""
     base_url = (openai_base_url or DEFAULT_OPENAI_BASE_URL).strip()
     if not base_url:
         raise ValueError("openai_base_url is required for non-gemini models")
 
     resolved_key = openai_api_key or DEFAULT_OPENAI_API_KEY or "dummy"
-    client = OpenAI(base_url=base_url, api_key=resolved_key)
+    provider = OpenAIProvider(base_url=base_url, api_key=resolved_key)
+    pai_model = OpenAIModel(model, provider=provider)
+    pai_history = _content_to_pai_messages(history or [])
 
-    messages: list[dict[str, str]] = []
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
-    for item in history or []:
-        role = "assistant" if item.role == "model" else "user"
-        text = _content_to_text(item)
-        if text:
-            messages.append({"role": role, "content": text})
-    messages.append({"role": "user", "content": user_prompt})
+    agent: Agent[None, Any] = Agent(
+        model=pai_model,
+        output_type=response_model or str,
+        system_prompt=system_prompt or "",
+    )
+
+    base_settings: OpenAIModelSettings = {
+        "temperature": temperature,
+        "top_p": top_p,
+        "seed": seed,
+    }
+    settings_with_effort: OpenAIModelSettings = {
+        **base_settings,
+        "openai_reasoning_effort": reasoning_effort,
+    }
+
+    run_result: AgentRunResult[Any]
+    if model in REASONING_EFFORT_UNSUPPORTED_MODELS:
+        run_result = agent.run_sync(
+            user_prompt,
+            message_history=pai_history or None,
+            model_settings=base_settings,
+        )
+    else:
+        try:
+            run_result = agent.run_sync(
+                user_prompt,
+                message_history=pai_history or None,
+                model_settings=settings_with_effort,
+            )
+        except Exception as err:
+            if not _is_reasoning_effort_unsupported_error(err):
+                raise
+            REASONING_EFFORT_UNSUPPORTED_MODELS.add(model)
+            run_result = agent.run_sync(
+                user_prompt,
+                message_history=pai_history or None,
+                model_settings=base_settings,
+            )
+
+    output = run_result.output
+    logger.info(
+        "llm_response backend=openai model=%s response_model=%s",
+        model,
+        response_model.__name__ if response_model else None,
+    )
 
     trace_metadata: dict[str, Any] = {
         "backend": "openai",
@@ -478,174 +393,51 @@ def _create_with_openai(
         "reasoning_effort": reasoning_effort,
         "response_model": response_model.__name__ if response_model else None,
     }
-
-    if response_model:
-        json_retry_messages = list(messages)
-        json_retry_messages.append(
-            {
-                "role": "user",
-                "content": (
-                    f"Return ONLY valid JSON that strictly matches the following JSON schema: {response_model.model_json_schema()}. "
-                    "Do not include markdown, explanations, or code fences."
-                ),
-            }
-        )
-        try:
-            parsed_resp = _chat_parse_with_reasoning_fallback(
-                client,
-                model=model,
-                messages=messages,
-                response_model=response_model,
-                temperature=temperature,
-                top_p=top_p,
-                seed=seed,
-                reasoning_effort=reasoning_effort,
-            )
-            parsed = parsed_resp.choices[0].message.parsed
-            if parsed is not None:
-                logger.info(
-                    "llm_response backend=openai model=%s response_model=%s parse_mode=parse",
-                    model,
-                    response_model.__name__,
-                )
-                _update_openai_generation(
-                    model=model,
-                    messages=messages,
-                    response=parsed_resp,
-                    output=parsed,
-                    metadata={**trace_metadata, "parse_mode": "parse"},
-                )
-                return parsed
-            retry_resp = _chat_create_with_reasoning_fallback(
-                client,
-                model=model,
-                messages=json_retry_messages,
-                temperature=temperature,
-                top_p=top_p,
-                seed=seed,
-                reasoning_effort=reasoning_effort,
-            )
-            retry_text = str(
-                retry_resp.choices[0].message.content or "").strip()
-            if retry_text:
-                logger.info(
-                    "llm_response backend=openai model=%s response_model=%s parse_mode=json_retry",
-                    model,
-                    response_model.__name__,
-                )
-                validated = _validate_response_model_from_text(response_model, retry_text)
-                _update_openai_generation(
-                    model=model,
-                    messages=json_retry_messages,
-                    response=retry_resp,
-                    output=retry_text,
-                    metadata={**trace_metadata, "parse_mode": "json_retry"},
-                )
-                return validated
-        except Exception:
-            pass
-
-    resp = _chat_create_with_reasoning_fallback(
-        client,
-        model=model,
-        messages=messages,
-        temperature=temperature,
-        top_p=top_p,
-        seed=seed,
-        reasoning_effort=reasoning_effort,
-    )
-    text = str((resp.choices[0].message.content or "")).strip()
-
-    if response_model:
-        try:
-            logger.info(
-                "llm_response backend=openai model=%s response_model=%s parse_mode=text_validate",
-                model,
-                response_model.__name__,
-            )
-            validated = _validate_response_model_from_text(response_model, text)
-            _update_openai_generation(
-                model=model,
-                messages=messages,
-                response=resp,
-                output=text,
-                metadata={**trace_metadata, "parse_mode": "text_validate"},
-            )
-            return validated
-        except Exception:
-            logger.info(
-                "llm_response backend=openai model=%s response_model=%s parse_mode=json_loads",
-                model,
-                response_model.__name__,
-            )
-            validated = response_model.model_validate(json.loads(text))
-            _update_openai_generation(
-                model=model,
-                messages=messages,
-                response=resp,
-                output=text,
-                metadata={**trace_metadata, "parse_mode": "json_loads"},
-            )
-            return validated
-    logger.info(
-        "llm_response backend=openai model=%s response_model=%s",
-        model,
-        None,
-    )
     _update_openai_generation(
         model=model,
-        messages=messages,
-        response=resp,
-        output=text,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        run_result=run_result,
+        output=output,
         metadata=trace_metadata,
     )
-    return SimpleNamespace(text=text, raw=resp)
 
-
-def _extract_openai_usage(response: Any) -> dict[str, int] | None:
-    """Extract token usage details from an OpenAI-compatible response."""
-    usage = getattr(response, "usage", None)
-    if usage is None:
-        return None
-    input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
-    output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
-    total_tokens = int(
-        getattr(usage, "total_tokens", 0)
-        or (input_tokens + output_tokens)
-    )
-    if not (input_tokens or output_tokens or total_tokens):
-        return None
-    return {
-        "input": input_tokens,
-        "output": output_tokens,
-        "total": total_tokens,
-    }
+    if response_model:
+        return output
+    return SimpleNamespace(text=str(output))
 
 
 def _update_openai_generation(
     *,
     model: str,
-    messages: list[dict[str, str]],
-    response: Any,
+    system_prompt: str | None,
+    user_prompt: str,
+    run_result: AgentRunResult[Any],
     output: Any,
     metadata: dict[str, Any],
 ) -> None:
     """Push input/output/usage info into the active Langfuse generation."""
     if not tracing.is_enabled():
         return
-    output_value: Any = output
     if hasattr(output, "model_dump"):
         try:
-            output_value = output.model_dump()
+            output_value: Any = output.model_dump()
         except Exception:
             output_value = str(output)
+    else:
+        output_value = str(output)
+
     update_kwargs: dict[str, Any] = {
         "model": model,
-        "input": messages,
+        "input": {"system_prompt": system_prompt, "user_prompt": user_prompt},
         "output": output_value,
         "metadata": metadata,
     }
-    usage = _extract_openai_usage(response)
-    if usage is not None:
-        update_kwargs["usage_details"] = usage
+    usage = run_result.usage()
+    if usage.input_tokens or usage.output_tokens:
+        update_kwargs["usage_details"] = {
+            "input": usage.input_tokens,
+            "output": usage.output_tokens,
+            "total": usage.total_tokens,
+        }
     tracing.update_current_generation(**update_kwargs)
