@@ -3,7 +3,7 @@ name = "trend-to-rule"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13.12"
+requires-python = ">=3.13.12,<3.14"
 dependencies = [
     "feedparser>=6.0.12",
     "flagembedding>=1.3.5",
@@ -14,7 +14,7 @@ dependencies = [
     "openai>=2.26.0",
     "orjson>=3.11.7",
     "pydantic>=2.11.7",
-    "pydantic-ai>=1.87.0,<1.88.0",
+    "pydantic-ai-slim[google,openai]>=1.87.0,<1.88.0",
     "python-dotenv>=1.2.2",
     "qdrant-client>=1.17.0",
     "sentence-transformers>=5.2.3",
