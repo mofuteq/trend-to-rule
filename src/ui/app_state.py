@@ -159,14 +159,19 @@ def start_new_chat_session(chat_id: str) -> None:
     st.session_state.history = []
 
 
-def load_active_chat(chat_db: ChatDB, chat_db_name: str) -> None:
+def load_active_chat(chat_db: ChatDB, chat_db_name: str, chat_meta_db_name: str) -> None:
     """Load active chat messages from db into session state."""
     if st.session_state.loaded_chat_id != st.session_state.chat_id:
         saved_messages = chat_db.get(
             key=st.session_state.chat_id,
             db_name=chat_db_name,
         )
-        st.session_state.last_user_goal = ""
+        meta = get_chat_meta(
+            chat_id=st.session_state.chat_id,
+            chat_db=chat_db,
+            chat_meta_db_name=chat_meta_db_name,
+        )
+        st.session_state.last_user_goal = str(meta.get("last_user_goal") or "")
         if isinstance(saved_messages, list):
             st.session_state.messages = saved_messages
             st.session_state.history = [
@@ -180,6 +185,29 @@ def load_active_chat(chat_db: ChatDB, chat_db_name: str) -> None:
             st.session_state.messages = []
             st.session_state.history = []
         st.session_state.loaded_chat_id = st.session_state.chat_id
+
+
+def set_last_user_goal(
+    chat_id: str,
+    last_user_goal: str,
+    chat_db: ChatDB,
+    chat_meta_db_name: str,
+) -> None:
+    """Persist the latest inferred user goal to chat metadata.
+
+    Args:
+        chat_id: Chat id to update.
+        last_user_goal: Inferred user goal from the completed turn.
+        chat_db: Chat database instance.
+        chat_meta_db_name: Database name for chat metadata.
+    """
+    meta = get_chat_meta(
+        chat_id=chat_id,
+        chat_db=chat_db,
+        chat_meta_db_name=chat_meta_db_name,
+    )
+    meta["last_user_goal"] = last_user_goal
+    chat_db.put(key=chat_id, value=meta, db_name=chat_meta_db_name)
 
 
 def update_chat_meta(chat_id: str, chat_db: ChatDB, chat_meta_db_name: str) -> None:

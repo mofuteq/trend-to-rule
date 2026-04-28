@@ -21,7 +21,7 @@ from services.chat_workflow import (
 )
 from services.image_search import ImageSearchResult
 from storage.chat_db import ChatDB
-from ui.app_state import add_message, get_chat_meta, set_chat_title
+from ui.app_state import add_message, get_chat_meta, set_chat_title, set_last_user_goal
 
 logger = logging.getLogger(__name__)
 ASSISTANT_AVATAR = ":material/auto_awesome:"
@@ -150,13 +150,6 @@ def process_user_prompt(
             },
         )
 
-        add_message(
-            role="user",
-            content=normalized_prompt,
-            chat_db=chat_db,
-            chat_db_name=config.chat_db_name,
-            chat_meta_db_name=config.chat_meta_db_name,
-        )
         with st.chat_message("user", avatar=None):
             st.markdown(normalized_prompt)
         with st.chat_message("assistant", avatar=ASSISTANT_AVATAR):
@@ -164,6 +157,7 @@ def process_user_prompt(
                 user_needs = analyze_user_needs(
                     user_prompt=normalized_prompt,
                     last_user_goal=st.session_state.last_user_goal,
+                    history=st.session_state.history or None,
                 )
                 st.write(user_needs)
                 status.update(label="Retrieving context...", expanded=False)
@@ -182,6 +176,13 @@ def process_user_prompt(
                 except Exception as err:
                     st.warning(f"Vector search failed: {err}")
 
+                add_message(
+                    role="user",
+                    content=normalized_prompt,
+                    chat_db=chat_db,
+                    chat_db_name=config.chat_db_name,
+                    chat_meta_db_name=config.chat_meta_db_name,
+                )
                 status.update(label="Thinking...", expanded=False)
                 assistant_response = generate_assistant_response(
                     user_prompt=user_prompt,
@@ -229,6 +230,12 @@ def process_user_prompt(
             except Exception as err:
                 logger.warning("Failed to generate chat title: %s", err)
         st.session_state.last_user_goal = user_needs.user_goal
+        set_last_user_goal(
+            chat_id=st.session_state.chat_id,
+            last_user_goal=user_needs.user_goal,
+            chat_db=chat_db,
+            chat_meta_db_name=config.chat_meta_db_name,
+        )
         if st.session_state.chat_id not in user_chat_ids:
             user_chat_ids.append(st.session_state.chat_id)
             chat_db.put(key=user_id, value=user_chat_ids,

@@ -112,6 +112,7 @@ def main() -> None:
     load_active_chat(
         chat_db=chat_db,
         chat_db_name=CONFIG.chat_db_name,
+        chat_meta_db_name=CONFIG.chat_meta_db_name,
     )
     render_history()
     render_chat_input(
