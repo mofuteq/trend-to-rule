@@ -164,6 +164,7 @@ def process_user_prompt(
                 user_needs = analyze_user_needs(
                     user_prompt=normalized_prompt,
                     last_user_goal=st.session_state.last_user_goal,
+                    history=st.session_state.history[:-1] or None,
                 )
                 st.write(user_needs)
                 status.update(label="Retrieving context...", expanded=False)

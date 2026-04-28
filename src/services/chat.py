@@ -2,6 +2,9 @@
 
 from datetime import datetime
 from typing import Literal
+
+from google.genai.types import Content
+
 from core.models import (
     UserNeeds,
     UserGoal,
@@ -102,6 +105,7 @@ def analyze_user_needs(
     user_prompt: str,
     api_key: str | None = None,
     last_user_goal: str | None = None,
+    history: list[Content] | None = None,
 ) -> UserNeeds:
     """Analyze user intent and return normalized user needs.
 
@@ -110,6 +114,7 @@ def analyze_user_needs(
         api_key (str | None): Gemini API key. Ignored when non-Gemini model is explicitly used.
             If omitted, environment value is used.
         last_user_goal (str | None): Previous inferred user goal for context.
+        history (list[Content] | None): Prior conversation history for multi-turn context.
 
     Returns:
         UserNeeds: Structured user-needs object inferred by the model.
@@ -126,7 +131,8 @@ def analyze_user_needs(
         response_model=UserGoal,
         api_key=api_key,
         model="gemini-2.5-flash",
-        reasoning_effort="medium"
+        reasoning_effort="medium",
+        history=history,
     )
     search_query = generate_search_query(
         user_prompt=user_prompt,
