@@ -2444,7 +2444,7 @@ requires-dist = [
     { name = "google-genai", specifier = ">=1.66.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "langfuse", specifier = ">=3.0.0" },
-    { name = "langgraph", specifier = ">=0.2.0" },
+    { name = "langgraph", specifier = ">=1.1.10,<1.2.0" },
     { name = "lmdb", specifier = ">=1.7.5" },
     { name = "openai", specifier = ">=2.26.0" },
     { name = "orjson", specifier = ">=3.11.7" },

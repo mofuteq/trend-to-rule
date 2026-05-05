@@ -110,7 +110,14 @@ def retrieve_supporting_context(
 
 
 class AssistantResponseState(TypedDict, total=False):
-    """LangGraph state for the linear assistant-response pipeline."""
+    """LangGraph state for the linear assistant-response pipeline.
+
+    `total=False` is intentional: each node progressively adds its own fields
+    to the state as the graph advances, so most keys are absent at earlier
+    steps. The required input fields (`user_prompt`, `user_needs`,
+    `retrieval`, `config`, `last_user_goal`, `history`) are always supplied
+    in the initial state passed to `invoke()`.
+    """
 
     user_prompt: str
     user_needs: UserNeeds
@@ -205,7 +212,14 @@ def _node_search_images(state: AssistantResponseState) -> dict:
 
 
 def _build_assistant_response_graph():
-    """Build a linear-transition state machine for the assistant response."""
+    """Build a linear-transition state machine for the assistant response.
+
+    This graph is intentionally linear and preserves the existing Fixed RAR
+    behavior: every turn runs claims -> draft -> decision support -> query ->
+    image query -> image search in a fixed order. Conditional routing,
+    sufficiency checks, and re-retrieval loops are deliberately out of scope
+    here and are planned as future Agentic RAR work on top of this graph.
+    """
     graph = StateGraph(AssistantResponseState)
     graph.add_node("extract_claims", _node_extract_claims)
     graph.add_node("extract_structured_draft", _node_extract_structured_draft)
