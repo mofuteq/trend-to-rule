@@ -143,7 +143,7 @@ flowchart TD
 
 ## State Machine Architecture
 
-The Fixed RAR (Retrieve → Analyze → Respond) flow is implemented as a LangGraph state machine in `src/services/chat_workflow.py`. The current graph topology is intentionally **linear**: `extract_claims → extract_structured_draft → generate_decision_support → generate_query → render_image_query → search_images`. The project deliberately prioritizes **deterministic orchestration** before introducing agentic branching, so every chat turn traverses the same ordered nodes and produces the same intermediate artifacts for the same inputs.
+The Fixed RAR (Retrieval-Augmented Reasoning) flow is implemented as a LangGraph state machine in `src/services/chat_workflow.py`. The current graph topology is intentionally **linear**: `extract_claims → extract_structured_draft → generate_decision_support → generate_query → render_image_query → search_images`. The project deliberately prioritizes **deterministic orchestration** before introducing agentic branching, so every chat turn traverses the same ordered nodes and produces the same intermediate artifacts for the same inputs.
 
 Each node consumes and extends a single typed shared state (`AssistantResponseState`, a `TypedDict`). Nodes return only the fields they produce — claims, structured draft, rule, query spec, image query, image results — and downstream nodes read those fields by name. Typing the exchange surface keeps node boundaries explicit and makes each transition auditable.
 
