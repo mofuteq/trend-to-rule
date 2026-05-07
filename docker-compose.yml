@@ -5,17 +5,40 @@ services:
       dockerfile: src/Dockerfile
     container_name: trend-to-rule-app
     depends_on:
-      - qdrant
-      - searxng
+      qdrant:
+        condition: service_started
+      searxng:
+        condition: service_started
+      langgraph-postgres:
+        condition: service_healthy
     env_file:
       - ./src/.env
     environment:
       VECTOR_QDRANT_URL: http://qdrant:6333
       SEARXNG_BASE_URL: http://searxng:8080
+      LANGGRAPH_POSTGRES_URL: postgresql://postgres:${LANGGRAPH_POSTGRES_PASSWORD:-postgres}@langgraph-postgres:5432/langgraph
     ports:
       - "8501:8501"
     volumes:
       - ./.data:/app/.data
+    restart: unless-stopped
+
+  langgraph-postgres:
+    image: postgres:17
+    container_name: trend-to-rule-langgraph-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${LANGGRAPH_POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: langgraph
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d langgraph"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./.data/langgraph/postgres:/var/lib/postgresql/data
     restart: unless-stopped
 
   qdrant:
