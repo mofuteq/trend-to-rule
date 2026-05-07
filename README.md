@@ -141,6 +141,29 @@ flowchart TD
     end
 ```
 
+## State Machine Architecture
+
+The Fixed RAR (Retrieve → Analyze → Respond) flow is implemented as a LangGraph state machine in `src/services/chat_workflow.py`. The current graph topology is intentionally **linear**: `extract_claims → extract_structured_draft → generate_decision_support → generate_query → render_image_query → search_images`. The project deliberately prioritizes **deterministic orchestration** before introducing agentic branching, so every chat turn traverses the same ordered nodes and produces the same intermediate artifacts for the same inputs.
+
+Each node consumes and extends a single typed shared state (`AssistantResponseState`, a `TypedDict`). Nodes return only the fields they produce — claims, structured draft, rule, query spec, image query, image results — and downstream nodes read those fields by name. Typing the exchange surface keeps node boundaries explicit and makes each transition auditable.
+
+```mermaid
+flowchart LR
+    S([START]) --> EC[extract_claims]
+    EC --> ESD[extract_structured_draft]
+    ESD --> GDS[generate_decision_support]
+    GDS --> GQ[generate_query]
+    GQ --> RIQ[render_image_query]
+    RIQ --> SI[search_images]
+    SI --> E([END])
+```
+
+Checkpoints are persisted to a dedicated Postgres instance (`langgraph-postgres` in `docker-compose.yml`, kept separate from the Langfuse stack) via `PostgresSaver` from `langgraph-checkpoint-postgres`. The checkpointer is attached at compile time when `LANGGRAPH_POSTGRES_URL` is set; otherwise the graph compiles without persistence so local runs without the container still work.
+
+`thread_id` is currently scoped to `chat_id:chat_turn`, intentionally — i.e. one LangGraph thread per chat turn rather than per chat. This keeps each turn starting from a clean initial state (matching the pre-checkpointer behavior) while still persisting every node transition so a specific turn can be inspected later by its `chat_id:chat_turn` key. It also keeps the door open to longer-lived threads in future work without changing today's contract.
+
+Future work — tracked under "Stateful Agentic RAR" — includes: conditional edges between nodes, sufficiency checks (e.g. claim/draft adequacy gates), retrieval loops that re-query when context is insufficient, and longer-lived stateful workflows that resume across turns. These are intentionally out of scope for the current graph; the linear topology exists as a reproducible, inspectable substrate to evolve incrementally rather than a finished agentic system.
+
 ## Directory Layout
 
 The codebase is organized to mirror the pipeline described above.
