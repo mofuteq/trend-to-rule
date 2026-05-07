@@ -12,7 +12,7 @@ from ui.app_sidebar import (
 from ui.app_chat import render_chat_input, render_history
 from ui.app_state import (
     get_chat_db,
-    get_or_create_anonymous_user_id,
+    get_workspace_user_id,
     init_session_state,
     load_active_chat,
     load_user_chat_ids,
@@ -44,7 +44,10 @@ def main() -> None:
     st.caption("Distill trends into rules, grounded in visuals.")
 
     init_session_state()
-    user_id = get_or_create_anonymous_user_id(CONFIG.anonymous_user_query_key)
+    user_id = get_workspace_user_id(
+        query_key=CONFIG.workspace_query_key,
+        default_workspace_key=CONFIG.default_workspace_key,
+    )
     if not st.session_state.chat_id:
         st.session_state.chat_id = str(uuid.uuid4())
 
@@ -112,6 +115,7 @@ def main() -> None:
     load_active_chat(
         chat_db=chat_db,
         chat_db_name=CONFIG.chat_db_name,
+        chat_meta_db_name=CONFIG.chat_meta_db_name,
     )
     render_history()
     render_chat_input(
