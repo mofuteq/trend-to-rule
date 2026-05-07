@@ -5,9 +5,12 @@ services:
       dockerfile: src/Dockerfile
     container_name: trend-to-rule-app
     depends_on:
-      - qdrant
-      - searxng
-      - langgraph-postgres
+      qdrant:
+        condition: service_started
+      searxng:
+        condition: service_started
+      langgraph-postgres:
+        condition: service_healthy
     env_file:
       - ./src/.env
     environment:
