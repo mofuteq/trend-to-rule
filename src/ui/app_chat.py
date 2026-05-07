@@ -185,6 +185,9 @@ def process_user_prompt(
                     config=config,
                     last_user_goal=st.session_state.last_user_goal,
                     history=prior_history,
+                    thread_id=(
+                        f"{st.session_state.chat_id}:{st.session_state.chat_turn}"
+                    ),
                 )
                 st.write(assistant_response.structured_claims)
                 st.write(assistant_response.structured_draft)
