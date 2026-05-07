@@ -10,6 +10,7 @@ dependencies = [
     "google-genai>=1.66.0",
     "httpx>=0.28.1",
     "langfuse>=3.0.0",
+    "langgraph>=1.1.10,<1.2.0",
     "lmdb>=1.7.5",
     "openai>=2.26.0",
     "orjson>=3.11.7",
