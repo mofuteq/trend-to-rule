@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-from typing import Literal
 
 import streamlit as st
 from google.genai.types import Content, Part
@@ -42,31 +41,53 @@ def get_chat_db(
     return st.session_state.chat_db
 
 
-def get_or_create_anonymous_user_id(query_key: str) -> str:
-    """Get anonymous user id from query params or create one.
+def reset_chat_selection() -> None:
+    """Reset chat selection state after switching workspace."""
+    st.session_state.chat_id = ""
+    st.session_state.loaded_chat_id = ""
+    st.session_state.last_user_goal = ""
+    st.session_state.chat_turn = 0
+    st.session_state.messages = []
+    st.session_state.history = []
+    st.session_state.pending_delete_chat_id = ""
+
+
+def get_workspace_user_id(query_key: str, default_workspace_key: str) -> str:
+    """Get the active workspace key from sidebar input and query params.
 
     Args:
-        query_key: Query parameter key used to persist the anonymous id.
+        query_key: Query parameter key used to persist the workspace key.
+        default_workspace_key: Workspace key used when none is provided.
 
     Returns:
-        str: Stable anonymous user id for the current browser session.
+        str: Active workspace key used as the chat-history user id.
     """
-    current_user_id = str(st.session_state.get("user_id") or "").strip()
-    if current_user_id:
-        return current_user_id
+    query_workspace = st.query_params.get(query_key, "")
+    if isinstance(query_workspace, list):
+        query_workspace = query_workspace[0] if query_workspace else ""
+    query_workspace = str(query_workspace or "").strip()
 
-    query_user_id = st.query_params.get(query_key, "")
-    if isinstance(query_user_id, list):
-        query_user_id = query_user_id[0] if query_user_id else ""
-    query_user_id = str(query_user_id or "").strip()
-    if not query_user_id:
-        import uuid
+    fallback_workspace = str(default_workspace_key or "demo").strip() or "demo"
+    current_workspace = str(st.session_state.get("user_id") or "").strip()
+    initial_workspace = current_workspace or query_workspace or fallback_workspace
 
-        query_user_id = f"anon-{uuid.uuid4()}"
-        st.query_params[query_key] = query_user_id
+    workspace_key = st.sidebar.text_input(
+        "Workspace key",
+        value=initial_workspace,
+        help="Use the same key later to reopen this workspace's chat history.",
+    ).strip()
+    if not workspace_key:
+        workspace_key = fallback_workspace
 
-    st.session_state.user_id = query_user_id
-    return query_user_id
+    if workspace_key != current_workspace:
+        reset_chat_selection()
+        st.session_state.user_id = workspace_key
+    else:
+        st.session_state.user_id = workspace_key
+
+    if query_workspace != workspace_key:
+        st.query_params[query_key] = workspace_key
+    return workspace_key
 
 
 def normalize_chat_id_list(raw_ids: list[object]) -> list[str]:
@@ -267,20 +288,25 @@ def set_chat_title(
     )
 
 
-def add_message(
-    role: Literal["user", "assistant"],
-    content: str,
+def add_turn(
+    user_content: str,
+    assistant_content: str,
     chat_db: ChatDB,
     chat_db_name: str,
     chat_meta_db_name: str,
 ) -> None:
-    """Append message to session and persist to db."""
-    st.session_state.messages.append({"role": role, "content": content})
-    st.session_state.history.append(
-        Content(
-            role="user" if role == "user" else "model",
-            parts=[Part(text=content)],
-        )
+    """Append a completed user/assistant turn and persist it to db."""
+    st.session_state.messages.extend(
+        [
+            {"role": "user", "content": user_content},
+            {"role": "assistant", "content": assistant_content},
+        ]
+    )
+    st.session_state.history.extend(
+        [
+            Content(role="user", parts=[Part(text=user_content)]),
+            Content(role="model", parts=[Part(text=assistant_content)]),
+        ]
     )
     chat_db.put(
         key=st.session_state.chat_id,

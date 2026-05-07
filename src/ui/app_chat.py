@@ -21,7 +21,7 @@ from services.chat_workflow import (
 )
 from services.image_search import ImageSearchResult
 from storage.chat_db import ChatDB
-from ui.app_state import add_message, get_chat_meta, set_chat_title, set_last_user_goal
+from ui.app_state import add_turn, get_chat_meta, set_chat_title, set_last_user_goal
 
 logger = logging.getLogger(__name__)
 ASSISTANT_AVATAR = ":material/auto_awesome:"
@@ -131,11 +131,12 @@ def process_user_prompt(
         user_prompt: Raw user prompt.
         chat_db: Chat database instance.
         user_chat_ids: Current user's chat id list.
-        user_id: Current anonymous user id.
+        user_id: Current workspace key.
         config: App runtime config.
     """
     st.session_state.chat_turn += 1
     normalized_prompt = normalize_text_nfkc(user_prompt)
+    prior_history = list(st.session_state.history)
     try:
         tracing.update_current_trace(
             name=f"chat_turn_{st.session_state.chat_turn}",
@@ -157,7 +158,7 @@ def process_user_prompt(
                 user_needs = analyze_user_needs(
                     user_prompt=normalized_prompt,
                     last_user_goal=st.session_state.last_user_goal,
-                    history=st.session_state.history or None,
+                    history=prior_history or None,
                 )
                 st.write(user_needs)
                 status.update(label="Retrieving context...", expanded=False)
@@ -176,21 +177,14 @@ def process_user_prompt(
                 except Exception as err:
                     st.warning(f"Vector search failed: {err}")
 
-                add_message(
-                    role="user",
-                    content=normalized_prompt,
-                    chat_db=chat_db,
-                    chat_db_name=config.chat_db_name,
-                    chat_meta_db_name=config.chat_meta_db_name,
-                )
                 status.update(label="Thinking...", expanded=False)
                 assistant_response = generate_assistant_response(
-                    user_prompt=user_prompt,
+                    user_prompt=normalized_prompt,
                     user_needs=user_needs,
                     retrieval=retrieval,
                     config=config,
                     last_user_goal=st.session_state.last_user_goal,
-                    history=st.session_state.history,
+                    history=prior_history,
                 )
                 st.write(assistant_response.structured_claims)
                 st.write(assistant_response.structured_draft)
@@ -203,9 +197,9 @@ def process_user_prompt(
             render_image_results(assistant_response.image_results)
             render_retrieved_results(retrieval)
 
-        add_message(
-            role="assistant",
-            content=assistant_response.rule,
+        add_turn(
+            user_content=normalized_prompt,
+            assistant_content=assistant_response.rule,
             chat_db=chat_db,
             chat_db_name=config.chat_db_name,
             chat_meta_db_name=config.chat_meta_db_name,
@@ -307,7 +301,7 @@ def render_chat_input(
     Args:
         chat_db: Chat database instance.
         user_chat_ids: Current user's chat id list.
-        user_id: Current anonymous user id.
+        user_id: Current workspace key.
         config: App runtime config.
     """
     user_prompt = st.chat_input("Start with a question")

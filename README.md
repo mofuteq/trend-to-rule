@@ -243,6 +243,7 @@ TRANSFORMERS_CACHE=.data/huggingface/hub
 SENTENCE_TRANSFORMERS_HOME=.data/huggingface/hub
 
 CHAT_DB_PATH=.data/chat_db
+T2R_DEFAULT_WORKSPACE=demo
 APP_LOG_LEVEL=INFO
 
 LANGFUSE_PUBLIC_KEY=
@@ -265,6 +266,7 @@ Notes:
 - `CLIP_IMAGE_MODEL_NAME`: Hugging Face model ID, not a filesystem path. This Sentence Transformers model embeds image candidates in the same CLIP space as the text model.
 - `HF_HOME` / `HF_HUB_CACHE` / `TRANSFORMERS_CACHE` / `SENTENCE_TRANSFORMERS_HOME`: Shared Hugging Face cache paths. Keep `TRANSFORMERS_CACHE` and `SENTENCE_TRANSFORMERS_HOME` aligned with `HF_HUB_CACHE` so BGE-M3 and Sentence Transformers CLIP models are stored under the same hub cache root, for example `.data/huggingface/hub/models--sentence-transformers--clip-ViT-B-32`.
 - `CHAT_DB_PATH`: LMDB path for chat history and session metadata.
+- `T2R_DEFAULT_WORKSPACE`: Default sidebar workspace key for chat history. Use the same workspace key later to reopen that workspace's saved chats.
 - `APP_LOG_LEVEL`: Application log level such as `INFO` or `DEBUG`.
 - `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST`: Optional Langfuse tracing. Leave empty to disable. See [docs/langfuse.md](./docs/langfuse.md) for setup and the self-hosted Compose overlay.
 
@@ -674,7 +676,7 @@ Langfuse `generation` spans are written by the existing `tracing` helpers (`@tra
 
 LLM calls and pipeline stages are optionally traced via [Langfuse](https://langfuse.com/). Tracing activates automatically when both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are present in `src/.env`; otherwise `src/services/tracing.py` degrades to a no-op.
 
-Each Streamlit chat turn is captured as a single `chat_turn` trace (tagged with the anonymous user id, chat session id, workflow version, and detected vertical) with nested spans for `analyze_user_needs`, `retrieve_supporting_context`, `extract_claims`, `extract_structured_draft`, `generate_decision_support`, `generate_query`, and `generate_chat_title`.
+Each Streamlit chat turn is captured as a single `chat_turn` trace (tagged with the workspace key, chat session id, workflow version, and detected vertical) with nested spans for `analyze_user_needs`, `retrieve_supporting_context`, `extract_claims`, `extract_structured_draft`, `generate_decision_support`, `generate_query`, and `generate_chat_title`.
 
 LLM calls in `services/llm_client.py` are recorded as `generation` spans carrying the model name, input messages, output, token usage (`input` / `output` / `total`), and sampling config (`temperature`, `top_p`, `seed`, `reasoning_effort`).
 

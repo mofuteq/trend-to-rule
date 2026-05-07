@@ -49,7 +49,8 @@ class AppConfig:
     searxng_base_url: str
     searxng_image_fetch_limit: int
     searxng_image_limit: int
-    anonymous_user_query_key: str
+    workspace_query_key: str
+    default_workspace_key: str
 
 
 def load_app_config() -> AppConfig:
@@ -82,5 +83,6 @@ def load_app_config() -> AppConfig:
             os.getenv("SEARXNG_IMAGE_FETCH_LIMIT", "10")
         ),
         searxng_image_limit=int(os.getenv("SEARXNG_IMAGE_LIMIT", "3")),
-        anonymous_user_query_key="uid",
+        workspace_query_key="workspace",
+        default_workspace_key=os.getenv("T2R_DEFAULT_WORKSPACE", "demo"),
     )
