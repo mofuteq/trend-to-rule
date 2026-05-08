@@ -8,8 +8,8 @@ from retrieval.app_retrieval import build_retrieved_results_html_table
 from services import tracing
 from services.chat import analyze_user_needs, generate_chat_title
 from services.llm_client import (
-    DEFAULT_OPENAI_MODEL,
-    DEFAULT_OPENAI_REASONING_EFFORT,
+    DEFAULT_OPENROUTER_MODEL,
+    DEFAULT_OPENROUTER_REASONING_EFFORT,
     DEFAULT_TEMPERATURE,
     DEFAULT_TOP_P,
     DEFAULT_SEED,
@@ -280,11 +280,11 @@ def process_user_prompt(
                     assistant_response.structured_claims.emerging_claims
                 ),
                 "model_params": {
-                    "model": DEFAULT_OPENAI_MODEL,
+                    "model": DEFAULT_OPENROUTER_MODEL,
                     "temperature": DEFAULT_TEMPERATURE,
                     "top_p": DEFAULT_TOP_P,
                     "seed": DEFAULT_SEED,
-                    "reasoning_effort": DEFAULT_OPENAI_REASONING_EFFORT,
+                    "reasoning_effort": DEFAULT_OPENROUTER_REASONING_EFFORT,
                 },
             },
         )

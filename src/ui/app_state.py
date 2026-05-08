@@ -1,7 +1,12 @@
 from datetime import datetime, timezone
 
 import streamlit as st
-from google.genai.types import Content, Part
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    UserPromptPart,
+)
 
 from storage.chat_db import ChatDB
 
@@ -196,10 +201,9 @@ def load_active_chat(chat_db: ChatDB, chat_db_name: str, chat_meta_db_name: str)
         if isinstance(saved_messages, list):
             st.session_state.messages = saved_messages
             st.session_state.history = [
-                Content(
-                    role="user" if msg["role"] == "user" else "model",
-                    parts=[Part(text=msg["content"])],
-                )
+                ModelRequest(parts=[UserPromptPart(content=msg["content"])])
+                if msg["role"] == "user"
+                else ModelResponse(parts=[TextPart(content=msg["content"])])
                 for msg in saved_messages
             ]
         else:
@@ -304,8 +308,8 @@ def add_turn(
     )
     st.session_state.history.extend(
         [
-            Content(role="user", parts=[Part(text=user_content)]),
-            Content(role="model", parts=[Part(text=assistant_content)]),
+            ModelRequest(parts=[UserPromptPart(content=user_content)]),
+            ModelResponse(parts=[TextPart(content=assistant_content)]),
         ]
     )
     chat_db.put(

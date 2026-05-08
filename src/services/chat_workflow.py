@@ -9,6 +9,7 @@ from typing import TypedDict
 
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.graph import END, START, StateGraph
+from pydantic_ai.messages import ModelMessage
 from psycopg_pool import ConnectionPool
 
 from core.app_config import AppConfig
@@ -129,7 +130,7 @@ class AssistantResponseState(TypedDict, total=False):
     retrieval: RetrievalBundle
     config: AppConfig
     last_user_goal: str | None
-    history: list[dict] | None
+    history: list[ModelMessage] | None
     structured_claims: StructuredClaims
     structured_draft: StructuredDraft
     rule: str
@@ -292,7 +293,7 @@ def generate_assistant_response(
     retrieval: RetrievalBundle,
     config: AppConfig,
     last_user_goal: str | None,
-    history: list[dict] | None,
+    history: list[ModelMessage] | None,
     thread_id: str | None = None,
 ) -> AssistantResponseBundle:
     """Generate assistant-side outputs from retrieval and user intent.
