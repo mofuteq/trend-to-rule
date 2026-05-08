@@ -1,10 +1,15 @@
 """High-level chat workflow orchestration shared by the Streamlit UI."""
 
 import logging
+import os
+import threading
+import uuid
 from dataclasses import dataclass
 from typing import TypedDict
 
+from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.graph import END, START, StateGraph
+from psycopg_pool import ConnectionPool
 
 from core.app_config import AppConfig
 from core.models import ExampleQuerySpec, StructuredClaims, StructuredDraft, UserNeeds
@@ -211,7 +216,7 @@ def _node_search_images(state: AssistantResponseState) -> dict:
     return {"image_results": image_results}
 
 
-def _build_assistant_response_graph():
+def _build_assistant_response_graph_builder() -> StateGraph:
     """Build a linear-transition state machine for the assistant response.
 
     This graph is intentionally linear and preserves the existing Fixed RAR
@@ -235,10 +240,48 @@ def _build_assistant_response_graph():
     graph.add_edge("generate_query", "render_image_query")
     graph.add_edge("render_image_query", "search_images")
     graph.add_edge("search_images", END)
-    return graph.compile()
+    return graph
 
 
-_ASSISTANT_RESPONSE_GRAPH = _build_assistant_response_graph()
+_ASSISTANT_RESPONSE_GRAPH_BUILDER = _build_assistant_response_graph_builder()
+_GRAPH_LOCK = threading.Lock()
+_COMPILED_GRAPH = None
+_CHECKPOINTER_POOL: ConnectionPool | None = None
+
+
+def _build_checkpointer() -> PostgresSaver | None:
+    """Create a PostgresSaver from ``LANGGRAPH_POSTGRES_URL`` if configured.
+
+    Returns None when the env var is unset so local runs without the postgres
+    container still work; in that case the graph compiles without persistence.
+    """
+    global _CHECKPOINTER_POOL
+    url = os.getenv("LANGGRAPH_POSTGRES_URL")
+    if not url:
+        return None
+    _CHECKPOINTER_POOL = ConnectionPool(
+        conninfo=url,
+        max_size=int(os.getenv("LANGGRAPH_POSTGRES_POOL_MAX", "10")),
+        kwargs={"autocommit": True, "prepare_threshold": 0},
+        open=True,
+    )
+    saver = PostgresSaver(_CHECKPOINTER_POOL)
+    saver.setup()
+    return saver
+
+
+def _get_compiled_graph():
+    """Lazily compile the assistant-response graph with a Postgres checkpointer."""
+    global _COMPILED_GRAPH
+    if _COMPILED_GRAPH is not None:
+        return _COMPILED_GRAPH
+    with _GRAPH_LOCK:
+        if _COMPILED_GRAPH is None:
+            checkpointer = _build_checkpointer()
+            _COMPILED_GRAPH = _ASSISTANT_RESPONSE_GRAPH_BUILDER.compile(
+                checkpointer=checkpointer,
+            )
+    return _COMPILED_GRAPH
 
 
 @tracing.observe(name="generate_assistant_response")
@@ -250,6 +293,7 @@ def generate_assistant_response(
     config: AppConfig,
     last_user_goal: str | None,
     history: list[dict] | None,
+    thread_id: str | None = None,
 ) -> AssistantResponseBundle:
     """Generate assistant-side outputs from retrieval and user intent.
 
@@ -260,6 +304,8 @@ def generate_assistant_response(
         config: App runtime config.
         last_user_goal: Previous inferred user goal.
         history: Prior chat history.
+        thread_id: LangGraph checkpoint thread id; one is generated when omitted
+            so each invocation starts from a clean state.
 
     Returns:
         AssistantResponseBundle: Claims, draft, final rule, and related images.
@@ -272,7 +318,10 @@ def generate_assistant_response(
         "last_user_goal": last_user_goal,
         "history": history,
     }
-    final_state = _ASSISTANT_RESPONSE_GRAPH.invoke(initial_state)
+    invoke_config = {
+        "configurable": {"thread_id": thread_id or str(uuid.uuid4())},
+    }
+    final_state = _get_compiled_graph().invoke(initial_state, invoke_config)
     return AssistantResponseBundle(
         structured_claims=final_state["structured_claims"],
         structured_draft=final_state["structured_draft"],
