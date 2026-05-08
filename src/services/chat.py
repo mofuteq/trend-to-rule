@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Literal
 
-from google.genai.types import Content
+from pydantic_ai.messages import ModelMessage
 
 from core.models import (
     UserNeeds,
@@ -16,7 +16,7 @@ from core.models import (
     ExampleQuerySpec
 )
 from services import tracing
-from services.llm_client import DEFAULT_OPENAI_MODEL, create
+from services.llm_client import create
 from services.prompt_service import (
     TEMPLATE_CHAT_TITLE,
     TEMPLATE_DECISION_SUPPORT,
@@ -27,6 +27,8 @@ from services.prompt_service import (
     TEMPLATE_STRUCTURED_DRAFT,
     TEMPLATE_USER_NEEDS,
 )
+
+ATTRIBUTE_INFERENCE_MODEL = "google/gemini-2.5-flash-lite"
 
 
 @tracing.observe(name="generate_search_query")
@@ -56,7 +58,6 @@ def generate_search_query(
             last_user_goal=last_user_goal,
             now=datetime.now()
         ),
-        model="gemini-2.5-flash",
         response_model=SearchQuery,
         reasoning_effort="low"
     )
@@ -67,8 +68,7 @@ def generate_search_query(
 def infer_attribute(
     input_text: str,
     task: Literal["article", "user_prompt"] = "article",
-    api_key: str | None = None,
-    model: str = DEFAULT_OPENAI_MODEL
+    model: str = ATTRIBUTE_INFERENCE_MODEL
 ) -> ArticleAttribute:
     """Infer structured attributes from article text.
 
@@ -76,9 +76,7 @@ def infer_attribute(
         input_text (str): Source text used for attribute inference.
         task (Literal["article", "user_prompt"]): Prompt mode that controls whether
             the input text should be interpreted as article content or a user prompt.
-        api_key (str | None): Gemini API key when Gemini model is selected.
-            If omitted, environment value is used.
-        model (str): Model name for inference. Defaults to `DEFAULT_OPENAI_MODEL`.
+        model (str): Model name for inference. Defaults to `ATTRIBUTE_INFERENCE_MODEL`.
 
     Returns:
         ArticleAttribute: Structured attributes inferred from the supplied text.
@@ -90,7 +88,6 @@ def infer_attribute(
             task=task
         ),
         response_model=ArticleAttribute,
-        api_key=api_key,
         model=model,
         temperature=0.0,
         top_p=0.6,
@@ -103,18 +100,15 @@ def infer_attribute(
 @tracing.observe(name="analyze_user_needs")
 def analyze_user_needs(
     user_prompt: str,
-    api_key: str | None = None,
     last_user_goal: str | None = None,
-    history: list[Content] | None = None,
+    history: list[ModelMessage] | None = None,
 ) -> UserNeeds:
     """Analyze user intent and return normalized user needs.
 
     Args:
         user_prompt (str): Raw user input text.
-        api_key (str | None): Gemini API key. Ignored when non-Gemini model is explicitly used.
-            If omitted, environment value is used.
         last_user_goal (str | None): Previous inferred user goal for context.
-        history (list[Content] | None): Prior conversation history for multi-turn context.
+        history (list[ModelMessage] | None): Prior conversation history for multi-turn context.
 
     Returns:
         UserNeeds: Structured user-needs object inferred by the model.
@@ -129,8 +123,6 @@ def analyze_user_needs(
             last_user_goal=last_user_goal
         ),
         response_model=UserGoal,
-        api_key=api_key,
-        model="gemini-2.5-flash",
         reasoning_effort="medium",
         history=history,
     )
@@ -141,8 +133,7 @@ def analyze_user_needs(
     )
     vertical = infer_attribute(
         input_text=user_prompt,
-        task="user_prompt",
-        model="gemini-2.5-flash"
+        task="user_prompt"
     ).vertical
     return UserNeeds(
         user_goal=user_goal.user_goal,
@@ -180,7 +171,6 @@ def extract_claims(
             emerging_context=emerging_context
         ),
         response_model=StructuredClaims,
-        model="gemini-2.5-flash",
         reasoning_effort="low"
     )
     return res
@@ -203,7 +193,6 @@ def extract_structured_draft(
     canonical_claims: list[Claim],
     emerging_claims: list[Claim],
     user_goal: str,
-    api_key: str | None = None,
 ) -> StructuredDraft:
     """Generate structured draft from user prompt and retrieved context.
 
@@ -211,7 +200,6 @@ def extract_structured_draft(
         canonical_claims (list[Claim]): Canonical claims extracted from retrieved context.
         emerging_claims (list[Claim]): Emerging claims extracted from retrieved context.
         user_goal (str): Current inferred user goal.
-        api_key (str | None): Gemini API key.
 
     Returns:
         StructuredDraft: Structured draft extracted from prompt and context.
@@ -233,8 +221,6 @@ def extract_structured_draft(
             user_goal=user_goal,
             now=datetime.now()
         ),
-        api_key=api_key,
-        model="gemini-2.5-flash",
         response_model=StructuredDraft,
         reasoning_effort="medium"
     )
@@ -246,9 +232,8 @@ def generate_decision_support(
     user_prompt: str,
     user_goal: str,
     structured_draft: StructuredDraft,
-    history: list[dict] | None = None,
+    history: list[ModelMessage] | None = None,
     last_user_goal: str | None = None,
-    api_key: str | None = None,
 ) -> str:
     """Generate decision-support output from the structured draft.
 
@@ -256,9 +241,8 @@ def generate_decision_support(
         user_prompt (str): Original user prompt.
         user_goal (str): Current inferred user goal.
         structured_draft (StructuredDraft): Structured draft generated from retrieval context.
-        history (list[dict] | None): Prior chat history to preserve conversational context.
+        history (list[ModelMessage] | None): Prior chat history to preserve conversational context.
         last_user_goal (str | None): Previous inferred user goal.
-        api_key (str | None): Gemini API key when Gemini backend is used.
 
     Returns:
         str: Decision-support result returned by the model.
@@ -276,8 +260,6 @@ def generate_decision_support(
             now=datetime.now()
         ),
         history=history,
-        api_key=api_key,
-        model="gemini-2.5-flash",
     )
     return res.text
 
@@ -286,14 +268,12 @@ def generate_decision_support(
 def generate_query(
     user_goal: str,
     rule: str,
-    api_key: str | None = None,
 ) -> ExampleQuerySpec:
     """Generate example query specifications from a synthesized rule.
 
     Args:
         user_goal (str): Current inferred user goal.
         rule (str): Synthesized rule text used as the query-generation source.
-        api_key (str | None): Gemini API key when Gemini backend is used.
 
     Returns:
         ExampleQuerySpec: Example query specification generated from the rule.
@@ -307,8 +287,6 @@ def generate_query(
         .module.system(
             user_goal=user_goal
         ),
-        api_key=api_key,
-        model="gemini-2.5-flash",
         response_model=ExampleQuerySpec,
         reasoning_effort="low",
     )
@@ -318,13 +296,11 @@ def generate_query(
 @tracing.observe(name="generate_chat_title")
 def generate_chat_title(
     messages: list[dict[str, str]],
-    api_key: str | None = None,
 ) -> str:
     """Generate a short chat title from chat history.
 
     Args:
         messages: Chat messages in chronological order.
-        api_key: Gemini API key when Gemini backend is used.
 
     Returns:
         str: Short chat title suitable for sidebar history display.
@@ -348,8 +324,6 @@ def generate_chat_title(
         ),
         system_prompt=TEMPLATE_CHAT_TITLE
         .module.system(),
-        api_key=api_key,
-        model="gemini-2.5-flash",
         temperature=0.2,
         top_p=0.8,
         reasoning_effort="low",
