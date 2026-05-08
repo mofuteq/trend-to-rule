@@ -1,5 +1,14 @@
 # trend-to-rule
 
+![Python](https://img.shields.io/badge/python-3.13-blue)
+![LangGraph](https://img.shields.io/badge/orchestration-LangGraph-green)
+![Postgres](https://img.shields.io/badge/checkpoints-Postgres-blue)
+![Pydantic AI](https://img.shields.io/badge/LLM-Pydantic%20AI-purple)
+![OpenRouter](https://img.shields.io/badge/provider-OpenRouter-black)
+![Langfuse](https://img.shields.io/badge/tracing-Langfuse-orange)
+![Qdrant](https://img.shields.io/badge/vector%20DB-Qdrant-red)
+![License](https://img.shields.io/badge/license-MIT-lightgrey)
+
 Observable reasoning system for distilling noisy fashion trend narratives into reusable style rules and grounded visual references.
 
 ---
@@ -270,6 +279,9 @@ APP_LOG_LEVEL=INFO
 LANGFUSE_PUBLIC_KEY=
 LANGFUSE_SECRET_KEY=
 LANGFUSE_HOST=
+
+# Optional: enable LangGraph checkpoint persistence for local non-Docker runs.
+LANGGRAPH_POSTGRES_URL=postgresql://postgres:postgres@localhost:5433/langgraph
 ```
 
 Notes:
@@ -288,6 +300,9 @@ Notes:
 - `T2R_DEFAULT_WORKSPACE`: Default sidebar workspace key for chat history. Use the same workspace key later to reopen that workspace's saved chats.
 - `APP_LOG_LEVEL`: Application log level such as `INFO` or `DEBUG`.
 - `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST`: Optional Langfuse tracing. Leave empty to disable. See [docs/langfuse.md](./docs/langfuse.md) for setup and the self-hosted Compose overlay.
+- `LANGGRAPH_POSTGRES_URL`: Optional. Enables LangGraph checkpoint persistence for local non-Docker runs. Docker Compose injects this automatically for the app service.
+
+`LANGGRAPH_POSTGRES_PASSWORD` is optional for Docker Compose and defaults to `postgres`. `LANGGRAPH_POSTGRES_POOL_MAX` is optional and defaults to `10`.
 
 SearXNG JSON response example:
 
@@ -297,7 +312,7 @@ curl "http://localhost:8008/search?q=silicon+valley+fashion&format=json"
 
 ## Run With Docker Compose
 
-Start the Streamlit app, Qdrant, and SearXNG together with the bundled Compose file:
+Start the Streamlit app, Qdrant, SearXNG, and the LangGraph checkpoint Postgres together with the bundled Compose file:
 
 ```bash
 docker compose up -d
@@ -308,6 +323,7 @@ Services will be available at:
 - Streamlit app: `http://localhost:8501`
 - Qdrant: `http://localhost:6333`
 - SearXNG: `http://localhost:8008`
+- LangGraph checkpoint Postgres: `localhost:5433` -> container `langgraph-postgres:5432`
 
 To stop it:
 
@@ -324,6 +340,10 @@ Compose details:
 - SearXNG is configured via [`searxng/settings.yml`](./searxng/settings.yml), allows `format=json` responses, and uses a non-default `server.secret_key`.
 - Local runtime data is mounted from `.data/` into the container at `/app/.data`, including Qdrant storage, logs, and shared Hugging Face model caches.
 - Environment variables are loaded from `src/.env` via `env_file`.
+- LangGraph checkpoints are persisted in the dedicated `langgraph-postgres` service.
+- Checkpoint data is stored under `.data/langgraph/postgres`.
+- The app waits for `langgraph-postgres` to become healthy before starting.
+- This Postgres is separate from the optional Langfuse Postgres in `docker-compose.langfuse.yml`.
 
 All persistent state lives on the host under `.data/` (git-ignored). Qdrant uses `.data/qdrant/`; the optional Langfuse overlay uses `.data/langfuse/{postgres,clickhouse,clickhouse-logs,valkey,seaweedfs}/`.
 
@@ -644,6 +664,12 @@ Planned improvements include:
 - Better visual grounding evaluation and query rendering for example retrieval
 - Observability-driven iteration using Langfuse traces and structured intermediate artifacts
 - A separate generalized evaluation repository for benchmarking structural reasoning against simpler retrieval baselines
+- Sufficiency-gated conditional edges
+- Query refinement / re-retrieval loops
+- Abstention / recommendation suppression when evidence is insufficient
+- Multi-turn state evaluation using checkpointed graph state
+
+The current state is a deterministic Fixed RAR pipeline with checkpointed state transitions. Sufficiency checks and retrieval loops are deliberately scoped as future work rather than claims about today's behavior.
 
 These additions aim to strengthen both the product value of the system and the clarity of its reasoning process.
 
@@ -658,6 +684,11 @@ The architecture is intentionally model-name configurable through `OPENROUTER_MO
 ### Backend
 
 All calls use `OpenRouterModel` + `OpenRouterProvider`. The default model is `google/gemini-3-flash-preview`.
+
+### Model Roles
+
+- Attribute / vertical inference uses `google/gemini-2.5-flash-lite` with `minimal` reasoning.
+- Main RAR stages use `OPENROUTER_MODEL`, defaulting to `google/gemini-3-flash-preview`.
 
 ### Structured vs Unstructured Output
 
