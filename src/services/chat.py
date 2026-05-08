@@ -92,7 +92,7 @@ def infer_attribute(
         temperature=0.0,
         top_p=0.6,
         seed=42,
-        reasoning_effort="low"
+        reasoning_effort="minimal"
     )
     return res
 

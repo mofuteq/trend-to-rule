@@ -4,7 +4,7 @@ import logging
 import os
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, TypeVar, cast
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -39,7 +39,11 @@ DEFAULT_OPENROUTER_MODEL = os.getenv(
     "OPENROUTER_MODEL",
     "google/gemini-3-flash-preview",
 )
-DEFAULT_OPENROUTER_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "low")
+ReasoningEffort = Literal["minimal", "low", "medium", "high"]
+DEFAULT_OPENROUTER_REASONING_EFFORT = cast(
+    ReasoningEffort,
+    os.getenv("OPENROUTER_REASONING_EFFORT", "low"),
+)
 
 
 @tracing.observe(as_type="generation", name="openrouter_generation")
@@ -48,14 +52,13 @@ def create(
     temperature: float = DEFAULT_TEMPERATURE,
     top_p: float = DEFAULT_TOP_P,
     seed: int = DEFAULT_SEED,
-    reasoning_effort: Literal["low", "medium",
-                              "high"] = DEFAULT_OPENROUTER_REASONING_EFFORT,
+    reasoning_effort: ReasoningEffort = DEFAULT_OPENROUTER_REASONING_EFFORT,
     system_prompt: str | None = None,
     response_model: type[ModelT] | None = None,
     history: list[ModelMessage] | None = None,
     model: str = DEFAULT_OPENROUTER_MODEL,
 ) -> ModelT | SimpleNamespace | Any:
-    """Send a message via OpenRouter's OpenAI-compatible endpoint.
+    """Send a message via the Pydantic AI OpenRouter provider.
 
     Args:
         user_prompt: User prompt text.

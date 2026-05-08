@@ -243,7 +243,7 @@ Typical example:
 ```dotenv
 OPENROUTER_API_KEY=your-openrouter-api-key
 OPENROUTER_MODEL=google/gemini-3-flash-preview
-OPENAI_REASONING_EFFORT=low
+OPENROUTER_REASONING_EFFORT=low
 
 VECTOR_QDRANT_URL=http://localhost:6333
 VECTOR_COLLECTION=article_markdown_bge_m3
@@ -274,9 +274,9 @@ LANGFUSE_HOST=
 
 Notes:
 
-- `OPENROUTER_API_KEY`: Required for the OpenRouter-backed OpenAI-compatible endpoint.
+- `OPENROUTER_API_KEY`: Required for the Pydantic AI OpenRouter provider.
 - `OPENROUTER_MODEL`: Default OpenRouter model name. Defaults to `google/gemini-3-flash-preview`.
-- `OPENAI_REASONING_EFFORT`: Reasoning level forwarded to OpenRouter model settings. Supported values are `low`, `medium`, and `high`.
+- `OPENROUTER_REASONING_EFFORT`: Reasoning level forwarded to OpenRouter model settings. Supported values are `minimal`, `low`, `medium`, and `high`.
 - `VECTOR_QDRANT_URL`: Qdrant endpoint URL (default: `http://localhost:6333`).
 - `SEARXNG_BASE_URL`: Optional SearXNG endpoint for app-side web search integration.
 - `SEARXNG_IMAGE_FETCH_LIMIT`: Number of raw image candidates fetched from SearXNG before CLIP reranking.
@@ -651,7 +651,7 @@ These additions aim to strengthen both the product value of the system and the c
 
 ## Model Handling
 
-`create()` in `src/services/llm_client.py` routes all LLM calls through [Pydantic AI](https://ai.pydantic.dev/) and OpenRouter's OpenAI-compatible endpoint.
+`create()` in `src/services/llm_client.py` routes all LLM calls through [Pydantic AI](https://ai.pydantic.dev/) using its OpenRouter provider.
 
 The architecture is intentionally model-name configurable through `OPENROUTER_MODEL`, while keeping the connection target fixed to OpenRouter.
 
@@ -667,16 +667,16 @@ All calls use `OpenRouterModel` + `OpenRouterProvider`. The default model is `go
 
 ### Thinking / Reasoning Configuration
 
-`reasoning_effort` is forwarded as `OpenRouterModelSettings.openrouter_reasoning`. Requests are not retried with fallback models; rate limits and backend errors are surfaced directly.
+`reasoning_effort` is forwarded as `OpenRouterModelSettings.openrouter_reasoning`. Supported values are `minimal`, `low`, `medium`, and `high`. Requests are not retried with fallback models; rate limits and backend errors are surfaced directly.
 
 ### Langfuse Tracing
 
 Langfuse `generation` spans are written by the existing `tracing` helpers (`@tracing.observe`, `tracing.update_current_generation`). Pydantic AI's own auto-instrumentation (`Agent.instrument_all()`) is intentionally not enabled here to avoid duplicate spans under the existing `chat_turn` trace structure.
 
-### OpenAI-Compatible Defaults
+### OpenRouter Defaults
 
 - `OPENROUTER_MODEL`: `google/gemini-3-flash-preview`
-- `OPENAI_REASONING_EFFORT`: `low`
+- `OPENROUTER_REASONING_EFFORT`: `low`
 
 `create()` also supports the following runtime parameters (with defaults):
 
