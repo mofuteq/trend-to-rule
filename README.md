@@ -280,6 +280,7 @@ LANGFUSE_PUBLIC_KEY=
 LANGFUSE_SECRET_KEY=
 LANGFUSE_HOST=
 
+# Optional: enable LangGraph checkpoint persistence for local non-Docker runs.
 LANGGRAPH_POSTGRES_URL=postgresql://postgres:postgres@localhost:5433/langgraph
 ```
 
