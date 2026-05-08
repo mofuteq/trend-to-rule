@@ -40,10 +40,16 @@ DEFAULT_OPENROUTER_MODEL = os.getenv(
     "google/gemini-3-flash-preview",
 )
 ReasoningEffort = Literal["minimal", "low", "medium", "high"]
-DEFAULT_OPENROUTER_REASONING_EFFORT = cast(
-    ReasoningEffort,
-    os.getenv("OPENROUTER_REASONING_EFFORT", "low"),
-)
+
+
+def _get_reasoning_effort() -> ReasoningEffort:
+    value = os.getenv("OPENROUTER_REASONING_EFFORT", "low")
+    if value not in {"minimal", "low", "medium", "high"}:
+        raise ValueError(f"Invalid OPENROUTER_REASONING_EFFORT: {value}")
+    return cast(ReasoningEffort, value)
+
+
+DEFAULT_OPENROUTER_REASONING_EFFORT = _get_reasoning_effort()
 
 
 @tracing.observe(as_type="generation", name="openrouter_generation")
