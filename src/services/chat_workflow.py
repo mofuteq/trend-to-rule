@@ -325,7 +325,12 @@ def generate_assistant_response(
     )
     invoke_config = {
         "configurable": {"thread_id": thread_id or str(uuid.uuid4())},
+        "run_name": "assistant_response_graph",
+        "tags": ["trend-to-rule", "fixed-rar", "langgraph"],
     }
+    langfuse_callback = tracing.get_langchain_callback_handler()
+    if langfuse_callback is not None:
+        invoke_config["callbacks"] = [langfuse_callback]
     final_state = _get_compiled_graph().invoke(initial_state, invoke_config)
     return AssistantResponseBundle(
         structured_claims=final_state["structured_claims"],

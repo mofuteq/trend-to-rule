@@ -147,6 +147,28 @@ def update_current_trace(**kwargs: Any) -> None:
         logger.debug("update_current_span failed: %s", err)
 
 
+def get_langchain_callback_handler() -> Any:
+    """Return a Langfuse LangChain callback handler for LangGraph, if available.
+
+    LangGraph emits its state-machine runs through LangChain callbacks. Passing
+    this handler into graph.invoke restores the native LangGraph transition view
+    in Langfuse while keeping tracing optional when credentials or integration
+    dependencies are unavailable.
+    """
+    if not is_enabled():
+        return None
+    try:
+        from langfuse.langchain import CallbackHandler  # type: ignore[import-not-found]
+    except Exception as err:
+        logger.warning("Langfuse LangChain callback import failed: %s", err)
+        return None
+    try:
+        return CallbackHandler()
+    except Exception as err:
+        logger.warning("Langfuse LangChain callback initialization failed: %s", err)
+        return None
+
+
 @contextmanager
 def propagate_attributes(**kwargs: Any):
     """Propagate trace-level attributes with a no-op fallback when disabled."""
@@ -178,6 +200,7 @@ def flush() -> None:
 __all__ = [
     "flush",
     "get_client",
+    "get_langchain_callback_handler",
     "is_enabled",
     "observe",
     "propagate_attributes",

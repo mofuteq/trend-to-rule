@@ -703,7 +703,7 @@ All calls use `OpenRouterModel` + `OpenRouterProvider`. The default model is `go
 
 ### Langfuse Tracing
 
-Langfuse `generation` spans are written by the existing `tracing` helpers (`@tracing.observe`, `tracing.update_current_generation`). Pydantic AI's own auto-instrumentation (`Agent.instrument_all()`) is intentionally not enabled here to avoid duplicate spans under the existing `chat_turn` trace structure.
+Langfuse `generation` spans are written by the existing `tracing` helpers (`@tracing.observe`, `tracing.update_current_generation`). In-scope LangGraph runs also pass Langfuse's LangChain callback handler into `graph.invoke()` so the Fixed RAR state-machine transition graph remains visible in Langfuse. Pydantic AI's own auto-instrumentation (`Agent.instrument_all()`) is intentionally not enabled here to avoid duplicate spans under the existing `chat_turn` trace structure.
 
 ### OpenRouter Defaults
 
@@ -723,7 +723,7 @@ Langfuse `generation` spans are written by the existing `tracing` helpers (`@tra
 
 LLM calls and pipeline stages are optionally traced via [Langfuse](https://langfuse.com/). Tracing activates automatically when both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are present in `src/.env`; otherwise `src/services/tracing.py` degrades to a no-op.
 
-Each Streamlit chat turn is captured as a single `chat_turn` trace (tagged with the workspace key, chat session id, workflow version, detected vertical, and scope status) with nested spans for `analyze_request`, `retrieve_supporting_context`, `extract_claims`, `extract_structured_draft`, `generate_decision_support`, `generate_query`, and `generate_chat_title`.
+Each Streamlit chat turn is captured as a single `chat_turn` trace (tagged with the workspace key, chat session id, workflow version, detected vertical, and scope status) with nested spans for `analyze_request`, `retrieve_supporting_context`, `extract_claims`, `extract_structured_draft`, `generate_decision_support`, `generate_query`, and `generate_chat_title`. For in-scope requests, Langfuse also receives the native LangGraph callback events for `assistant_response_graph`; out-of-scope requests stop after request analysis and the fixed abstention response.
 
 LLM calls in `services/llm_client.py` are recorded as `generation` spans carrying the model name, input messages, output, token usage (`input` / `output` / `total`), and sampling config (`temperature`, `top_p`, `seed`, `reasoning_effort`).
 
