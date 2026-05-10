@@ -4,11 +4,10 @@ import logging
 import os
 import threading
 import uuid
-from dataclasses import dataclass
-from typing import TypedDict
 
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.graph import END, START, StateGraph
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic_ai.messages import ModelMessage
 from psycopg_pool import ConnectionPool
 
@@ -60,25 +59,23 @@ def _build_fallback_image_query(user_needs: UserNeeds, rule: str) -> str:
     return prefix
 
 
-@dataclass(slots=True)
-class RetrievalBundle:
+class RetrievalBundle(BaseModel):
     """Retrieved vector-search outputs used downstream by the chat workflow."""
 
     canonical_context: str
     emerging_context: str
-    canonical_rows: list[dict[str, str]]
-    emerging_rows: list[dict[str, str]]
+    canonical_rows: list[dict[str, str]] = Field(default_factory=list)
+    emerging_rows: list[dict[str, str]] = Field(default_factory=list)
 
 
-@dataclass(slots=True)
-class AssistantResponseBundle:
+class AssistantResponseBundle(BaseModel):
     """All derived assistant artifacts for a single user prompt."""
 
     structured_claims: StructuredClaims
     structured_draft: StructuredDraft
     rule: str
     image_query: str
-    image_results: list[ImageSearchResult]
+    image_results: list[ImageSearchResult] = Field(default_factory=list)
 
 
 @tracing.observe(name="retrieve_supporting_context")
@@ -115,55 +112,57 @@ def retrieve_supporting_context(
     )
 
 
-class AssistantResponseState(TypedDict, total=False):
+class AssistantResponseState(BaseModel):
     """LangGraph state for the linear assistant-response pipeline.
 
-    `total=False` is intentional: each node progressively adds its own fields
-    to the state as the graph advances, so most keys are absent at earlier
-    steps. The required input fields (`user_prompt`, `user_needs`,
-    `retrieval`, `config`, `last_user_goal`, `history`) are always supplied
-    in the initial state passed to `invoke()`.
+    Each node progressively populates its own fields on the state as the graph
+    advances, so most fields are absent at earlier steps and default to
+    ``None`` (or empty containers). The required input fields (``user_prompt``,
+    ``user_needs``, ``retrieval``, ``config``, ``last_user_goal``, ``history``)
+    are always supplied in the initial state passed to ``invoke()``.
     """
 
-    user_prompt: str
-    user_needs: UserNeeds
-    retrieval: RetrievalBundle
-    config: AppConfig
-    last_user_goal: str | None
-    history: list[ModelMessage] | None
-    structured_claims: StructuredClaims
-    structured_draft: StructuredDraft
-    rule: str
-    query_spec: ExampleQuerySpec
-    image_query: str
-    image_results: list[ImageSearchResult]
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    user_prompt: str | None = None
+    user_needs: UserNeeds | None = None
+    retrieval: RetrievalBundle | None = None
+    config: AppConfig | None = None
+    last_user_goal: str | None = None
+    history: list[ModelMessage] | None = None
+    structured_claims: StructuredClaims | None = None
+    structured_draft: StructuredDraft | None = None
+    rule: str | None = None
+    query_spec: ExampleQuerySpec | None = None
+    image_query: str | None = None
+    image_results: list[ImageSearchResult] = Field(default_factory=list)
 
 
 def _node_extract_claims(state: AssistantResponseState) -> dict:
     structured_claims = extract_claims(
-        canonical_context=state["retrieval"].canonical_context,
-        emerging_context=state["retrieval"].emerging_context,
-        user_goal=state["user_needs"].user_goal,
+        canonical_context=state.retrieval.canonical_context,
+        emerging_context=state.retrieval.emerging_context,
+        user_goal=state.user_needs.user_goal,
     )
     return {"structured_claims": structured_claims}
 
 
 def _node_extract_structured_draft(state: AssistantResponseState) -> dict:
     structured_draft = extract_structured_draft(
-        canonical_claims=state["structured_claims"].canonical_claims,
-        emerging_claims=state["structured_claims"].emerging_claims,
-        user_goal=state["user_needs"].user_goal,
+        canonical_claims=state.structured_claims.canonical_claims,
+        emerging_claims=state.structured_claims.emerging_claims,
+        user_goal=state.user_needs.user_goal,
     )
     return {"structured_draft": structured_draft}
 
 
 def _node_generate_decision_support(state: AssistantResponseState) -> dict:
     decision_support = generate_decision_support(
-        user_prompt=state["user_prompt"],
-        user_goal=state["user_needs"].user_goal,
-        last_user_goal=state.get("last_user_goal"),
-        history=state.get("history"),
-        structured_draft=state["structured_draft"],
+        user_prompt=state.user_prompt,
+        user_goal=state.user_needs.user_goal,
+        last_user_goal=state.last_user_goal,
+        history=state.history,
+        structured_draft=state.structured_draft,
     )
     rule = normalize_text_nfkc(decision_support or "")
     return {"rule": rule}
@@ -171,20 +170,20 @@ def _node_generate_decision_support(state: AssistantResponseState) -> dict:
 
 def _node_generate_query(state: AssistantResponseState) -> dict:
     query_spec = generate_query(
-        user_goal=state["user_needs"].user_goal,
-        rule=state["rule"],
+        user_goal=state.user_needs.user_goal,
+        rule=state.rule,
     )
     return {"query_spec": query_spec}
 
 
 def _node_render_image_query(state: AssistantResponseState) -> dict:
-    query_spec = state["query_spec"]
+    query_spec = state.query_spec
     try:
         image_query = render_example_query(query_spec)
     except ValueError as err:
         image_query = _build_fallback_image_query(
-            user_needs=state["user_needs"],
-            rule=state["rule"],
+            user_needs=state.user_needs,
+            rule=state.rule,
         )
         logger.warning(
             "render_example_query failed: %s; fallback_image_query=%s query_spec=%s",
@@ -196,8 +195,8 @@ def _node_render_image_query(state: AssistantResponseState) -> dict:
 
 
 def _node_search_images(state: AssistantResponseState) -> dict:
-    config = state["config"]
-    image_query = state["image_query"]
+    config = state.config
+    image_query = state.image_query
     image_results: list[ImageSearchResult] = []
     try:
         logger.info(
@@ -311,14 +310,14 @@ def generate_assistant_response(
     Returns:
         AssistantResponseBundle: Claims, draft, final rule, and related images.
     """
-    initial_state: AssistantResponseState = {
-        "user_prompt": user_prompt,
-        "user_needs": user_needs,
-        "retrieval": retrieval,
-        "config": config,
-        "last_user_goal": last_user_goal,
-        "history": history,
-    }
+    initial_state = AssistantResponseState(
+        user_prompt=user_prompt,
+        user_needs=user_needs,
+        retrieval=retrieval,
+        config=config,
+        last_user_goal=last_user_goal,
+        history=history,
+    )
     invoke_config = {
         "configurable": {"thread_id": thread_id or str(uuid.uuid4())},
     }
