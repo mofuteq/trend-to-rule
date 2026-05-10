@@ -11,6 +11,11 @@ class SearchQuery(BaseModel):
     emerging_query: str
 
 
+class RequestGoal(BaseModel):
+    request_goal: str
+    is_in_scope: bool
+
+
 class RequestAnalysis(BaseModel):
     request_goal: str
     candidate_queries: SearchQuery

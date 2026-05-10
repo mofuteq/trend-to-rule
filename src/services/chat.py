@@ -7,6 +7,7 @@ from pydantic_ai.messages import ModelMessage
 
 from core.models import (
     RequestAnalysis,
+    RequestGoal,
     ArticleAttribute,
     StructuredDraft,
     SearchQuery,
@@ -112,7 +113,7 @@ def analyze_request(
     Returns:
         RequestAnalysis: Structured request analysis inferred by the model.
     """
-    request_analysis = create(
+    request_goal = create(
         user_prompt=TEMPLATE_REQUEST_ANALYSIS
         .module.user(
             user_prompt=user_prompt
@@ -121,11 +122,25 @@ def analyze_request(
         .module.system(
             last_request_goal=last_request_goal
         ),
-        response_model=RequestAnalysis,
+        response_model=RequestGoal,
         reasoning_effort="medium",
         history=history,
     )
-    return request_analysis
+    search_query = generate_search_query(
+        user_prompt=user_prompt,
+        request_goal=request_goal.request_goal,
+        last_request_goal=last_request_goal,
+    )
+    vertical = infer_attribute(
+        input_text=user_prompt,
+        task="user_prompt",
+    ).vertical
+    return RequestAnalysis(
+        request_goal=request_goal.request_goal,
+        candidate_queries=search_query,
+        vertical=vertical,
+        is_in_scope=request_goal.is_in_scope,
+    )
 
 
 @tracing.observe(name="extract_claims")
