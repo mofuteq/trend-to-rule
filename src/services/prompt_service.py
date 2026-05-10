@@ -7,9 +7,9 @@ from core.template_utils import get_j2_template
 SRC_ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE_SEARCH_PATH = SRC_ROOT / "prompt_template"
 
-TEMPLATE_USER_NEEDS = get_j2_template(
+TEMPLATE_REQUEST_ANALYSIS = get_j2_template(
     searchpath=TEMPLATE_SEARCH_PATH,
-    name="user_needs.j2",
+    name="request_analysis.j2",
 )
 TEMPLATE_INFER_ARTICLE = get_j2_template(
     searchpath=TEMPLATE_SEARCH_PATH,
@@ -48,5 +48,5 @@ __all__ = [
     "TEMPLATE_SEARCH_QUERY",
     "TEMPLATE_STRUCTURED_CLAIMS",
     "TEMPLATE_STRUCTURED_DRAFT",
-    "TEMPLATE_USER_NEEDS",
+    "TEMPLATE_REQUEST_ANALYSIS",
 ]

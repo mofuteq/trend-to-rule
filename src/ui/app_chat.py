@@ -6,7 +6,7 @@ from core.app_config import AppConfig
 from core.text_utils import normalize_text_nfkc
 from retrieval.app_retrieval import build_retrieved_results_html_table
 from services import tracing
-from services.chat import analyze_user_needs, generate_chat_title
+from services.chat import analyze_request, generate_chat_title
 from services.llm_client import (
     DEFAULT_OPENROUTER_MODEL,
     DEFAULT_OPENROUTER_REASONING_EFFORT,
@@ -21,11 +21,23 @@ from services.chat_workflow import (
 )
 from services.image_search import ImageSearchResult
 from storage.chat_db import ChatDB
-from ui.app_state import add_turn, get_chat_meta, set_chat_title, set_last_user_goal
+from ui.app_state import (
+    add_turn,
+    get_chat_meta,
+    set_chat_title,
+    set_last_request_goal,
+)
 
 logger = logging.getLogger(__name__)
 ASSISTANT_AVATAR = ":material/auto_awesome:"
 WORKFLOW_VERSION = "v1"
+OUT_OF_SCOPE_MESSAGE = (
+    "This app is focused on fashion, styling, and trend analysis.\n"
+    "This request appears to be outside that scope, so I did not run retrieval or "
+    "reasoning.\n"
+    "Please reframe the question in a fashion, styling, outfit, apparel, visual "
+    "reference, or trend-related context."
+)
 
 
 def render_history() -> None:
@@ -155,13 +167,12 @@ def process_user_prompt(
             st.markdown(normalized_prompt)
         with st.chat_message("assistant", avatar=ASSISTANT_AVATAR):
             with st.status("Analyzing...", expanded=False) as status:
-                user_needs = analyze_user_needs(
+                request_analysis = analyze_request(
                     user_prompt=normalized_prompt,
-                    last_user_goal=st.session_state.last_user_goal,
+                    last_request_goal=st.session_state.last_request_goal,
                     history=prior_history or None,
                 )
-                st.write(user_needs)
-                status.update(label="Retrieving context...", expanded=False)
+                st.write(request_analysis)
 
                 retrieval = RetrievalBundle(
                     canonical_context="",
@@ -169,40 +180,50 @@ def process_user_prompt(
                     canonical_rows=[],
                     emerging_rows=[],
                 )
-                try:
-                    retrieval = retrieve_supporting_context(
-                        user_needs,
-                        config=config,
+                assistant_response = None
+                if not request_analysis.is_in_scope:
+                    assistant_rule = OUT_OF_SCOPE_MESSAGE
+                    status.update(
+                        label="Outside app scope", state="complete", expanded=False
                     )
-                except Exception as err:
-                    st.warning(f"Vector search failed: {err}")
+                else:
+                    status.update(label="Retrieving context...", expanded=False)
+                    try:
+                        retrieval = retrieve_supporting_context(
+                            request_analysis,
+                            config=config,
+                        )
+                    except Exception as err:
+                        st.warning(f"Vector search failed: {err}")
 
-                status.update(label="Thinking...", expanded=False)
-                assistant_response = generate_assistant_response(
-                    user_prompt=normalized_prompt,
-                    user_needs=user_needs,
-                    retrieval=retrieval,
-                    config=config,
-                    last_user_goal=st.session_state.last_user_goal,
-                    history=prior_history,
-                    thread_id=(
-                        f"{st.session_state.chat_id}:{st.session_state.chat_turn}"
-                    ),
-                )
-                st.write(assistant_response.structured_claims)
-                st.write(assistant_response.structured_draft)
-                st.write(assistant_response.image_query)
-                status.update(
-                    label="Thinking complete", state="complete", expanded=False
-                )
+                    status.update(label="Thinking...", expanded=False)
+                    assistant_response = generate_assistant_response(
+                        user_prompt=normalized_prompt,
+                        request_analysis=request_analysis,
+                        retrieval=retrieval,
+                        config=config,
+                        last_request_goal=st.session_state.last_request_goal,
+                        history=prior_history,
+                        thread_id=(
+                            f"{st.session_state.chat_id}:{st.session_state.chat_turn}"
+                        ),
+                    )
+                    assistant_rule = assistant_response.rule
+                    st.write(assistant_response.structured_claims)
+                    st.write(assistant_response.structured_draft)
+                    st.write(assistant_response.image_query)
+                    status.update(
+                        label="Thinking complete", state="complete", expanded=False
+                    )
 
-            stream_markdown_text(assistant_response.rule)
-            render_image_results(assistant_response.image_results)
+            stream_markdown_text(assistant_rule)
+            if assistant_response is not None:
+                render_image_results(assistant_response.image_results)
             render_retrieved_results(retrieval)
 
         add_turn(
             user_content=normalized_prompt,
-            assistant_content=assistant_response.rule,
+            assistant_content=assistant_rule,
             chat_db=chat_db,
             chat_db_name=config.chat_db_name,
             chat_meta_db_name=config.chat_meta_db_name,
@@ -226,33 +247,49 @@ def process_user_prompt(
                     )
             except Exception as err:
                 logger.warning("Failed to generate chat title: %s", err)
-        st.session_state.last_user_goal = user_needs.user_goal
-        set_last_user_goal(
+        st.session_state.last_request_goal = request_analysis.request_goal
+        set_last_request_goal(
             chat_id=st.session_state.chat_id,
-            last_user_goal=user_needs.user_goal,
+            last_request_goal=request_analysis.request_goal,
             chat_db=chat_db,
             chat_meta_db_name=config.chat_meta_db_name,
         )
         if st.session_state.chat_id not in user_chat_ids:
             user_chat_ids.append(st.session_state.chat_id)
-            chat_db.put(key=user_id, value=user_chat_ids,
-                        db_name=config.user_db_name)
+            chat_db.put(
+                key=user_id,
+                value=user_chat_ids,
+                db_name=config.user_db_name,
+            )
 
         tracing.update_current_trace(
             output={
-                "rule": assistant_response.rule,
-                "user_goal": user_needs.user_goal,
-                "vertical": user_needs.vertical,
-                "candidate_queries": user_needs.candidate_queries.model_dump(),
+                "rule": assistant_rule,
+                "request_goal": request_analysis.request_goal,
+                "vertical": request_analysis.vertical,
+                "is_in_scope": request_analysis.is_in_scope,
+                "candidate_queries": request_analysis.candidate_queries.model_dump(),
                 "structured_claims": (
                     assistant_response.structured_claims.model_dump()
+                    if assistant_response is not None
+                    else None
                 ),
                 "structured_draft": (
                     assistant_response.structured_draft.model_dump()
+                    if assistant_response is not None
+                    else None
                 ),
-                "image_query": assistant_response.image_query,
+                "image_query": (
+                    assistant_response.image_query
+                    if assistant_response is not None
+                    else ""
+                ),
                 "image_results": [
-                    item.model_dump() for item in assistant_response.image_results
+                    item.model_dump() for item in (
+                        assistant_response.image_results
+                        if assistant_response is not None
+                        else []
+                    )
                 ],
                 "retrieval": {
                     "canonical_rows": retrieval.canonical_rows,
@@ -263,21 +300,35 @@ def process_user_prompt(
                 "trend-to-rule",
                 "chat_turn",
                 f"workflow:{WORKFLOW_VERSION}",
-                f"vertical:{user_needs.vertical}",
+                f"vertical:{request_analysis.vertical}",
+                f"in_scope:{request_analysis.is_in_scope}",
             ],
             metadata={
                 "chat_turn": st.session_state.chat_turn,
-                "user_goal": user_needs.user_goal,
-                "vertical": user_needs.vertical,
-                "image_query": assistant_response.image_query,
-                "image_result_count": len(assistant_response.image_results),
+                "request_goal": request_analysis.request_goal,
+                "vertical": request_analysis.vertical,
+                "is_in_scope": request_analysis.is_in_scope,
+                "image_query": (
+                    assistant_response.image_query
+                    if assistant_response is not None
+                    else ""
+                ),
+                "image_result_count": (
+                    len(assistant_response.image_results)
+                    if assistant_response is not None
+                    else 0
+                ),
                 "canonical_hits": len(retrieval.canonical_rows),
                 "emerging_hits": len(retrieval.emerging_rows),
-                "canonical_claim_count": len(
-                    assistant_response.structured_claims.canonical_claims
+                "canonical_claim_count": (
+                    len(assistant_response.structured_claims.canonical_claims)
+                    if assistant_response is not None
+                    else 0
                 ),
-                "emerging_claim_count": len(
-                    assistant_response.structured_claims.emerging_claims
+                "emerging_claim_count": (
+                    len(assistant_response.structured_claims.emerging_claims)
+                    if assistant_response is not None
+                    else 0
                 ),
                 "model_params": {
                     "model": DEFAULT_OPENROUTER_MODEL,

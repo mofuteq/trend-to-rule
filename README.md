@@ -112,8 +112,9 @@ flowchart TD
     C -->|Dense + Sparse vectors| D[(Qdrant collection)]
     C -->|Payload metadata\npublished_at/ingested_at\npublished_ts/ingested_ts| D
 
-    E[Streamlit app.py] --> F[analyze_user_needs]
-    F --> G[canonical_query / emerging_query]
+    E[Streamlit app.py] --> F[analyze_request]
+    F -->|in scope| G[canonical_query / emerging_query]
+    F -->|out of scope| X[fixed abstention]
 
     G --> H[app_retrieval.py]
     H -->|Hybrid search + time filter| D
@@ -722,7 +723,7 @@ Langfuse `generation` spans are written by the existing `tracing` helpers (`@tra
 
 LLM calls and pipeline stages are optionally traced via [Langfuse](https://langfuse.com/). Tracing activates automatically when both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are present in `src/.env`; otherwise `src/services/tracing.py` degrades to a no-op.
 
-Each Streamlit chat turn is captured as a single `chat_turn` trace (tagged with the workspace key, chat session id, workflow version, and detected vertical) with nested spans for `analyze_user_needs`, `retrieve_supporting_context`, `extract_claims`, `extract_structured_draft`, `generate_decision_support`, `generate_query`, and `generate_chat_title`.
+Each Streamlit chat turn is captured as a single `chat_turn` trace (tagged with the workspace key, chat session id, workflow version, detected vertical, and scope status) with nested spans for `analyze_request`, `retrieve_supporting_context`, `extract_claims`, `extract_structured_draft`, `generate_decision_support`, `generate_query`, and `generate_chat_title`.
 
 LLM calls in `services/llm_client.py` are recorded as `generation` spans carrying the model name, input messages, output, token usage (`input` / `output` / `total`), and sampling config (`temperature`, `top_p`, `seed`, `reasoning_effort`).
 

@@ -16,7 +16,12 @@ def init_session_state() -> None:
     st.session_state.setdefault("user_id", "")
     st.session_state.setdefault("messages", [])
     st.session_state.setdefault("history", [])
-    st.session_state.setdefault("last_user_goal", "")
+    st.session_state.setdefault("last_request_goal", "")
+    if (
+        not st.session_state.last_request_goal
+        and st.session_state.get("last_user_goal")
+    ):
+        st.session_state.last_request_goal = str(st.session_state.last_user_goal)
     st.session_state.setdefault("chat_id", "")
     st.session_state.setdefault("loaded_chat_id", "")
     st.session_state.setdefault("pending_delete_chat_id", "")
@@ -50,7 +55,7 @@ def reset_chat_selection() -> None:
     """Reset chat selection state after switching workspace."""
     st.session_state.chat_id = ""
     st.session_state.loaded_chat_id = ""
-    st.session_state.last_user_goal = ""
+    st.session_state.last_request_goal = ""
     st.session_state.chat_turn = 0
     st.session_state.messages = []
     st.session_state.history = []
@@ -112,7 +117,11 @@ def normalize_chat_id_list(raw_ids: list[object]) -> list[str]:
             continue
         if isinstance(raw_id, list):
             for nested_id in raw_id:
-                if isinstance(nested_id, str) and nested_id and nested_id not in normalized:
+                if (
+                    isinstance(nested_id, str)
+                    and nested_id
+                    and nested_id not in normalized
+                ):
                     normalized.append(nested_id)
     return normalized
 
@@ -179,7 +188,7 @@ def start_new_chat_session(chat_id: str) -> None:
     """Reset chat-related session state for a new conversation."""
     st.session_state.chat_id = chat_id
     st.session_state.loaded_chat_id = ""
-    st.session_state.last_user_goal = ""
+    st.session_state.last_request_goal = ""
     st.session_state.chat_turn = 0
     st.session_state.messages = []
     st.session_state.history = []
@@ -197,7 +206,9 @@ def load_active_chat(chat_db: ChatDB, chat_db_name: str, chat_meta_db_name: str)
             chat_db=chat_db,
             chat_meta_db_name=chat_meta_db_name,
         )
-        st.session_state.last_user_goal = str(meta.get("last_user_goal") or "")
+        st.session_state.last_request_goal = str(
+            meta.get("last_request_goal") or meta.get("last_user_goal") or ""
+        )
         if isinstance(saved_messages, list):
             st.session_state.messages = saved_messages
             st.session_state.history = [
@@ -212,17 +223,17 @@ def load_active_chat(chat_db: ChatDB, chat_db_name: str, chat_meta_db_name: str)
         st.session_state.loaded_chat_id = st.session_state.chat_id
 
 
-def set_last_user_goal(
+def set_last_request_goal(
     chat_id: str,
-    last_user_goal: str,
+    last_request_goal: str,
     chat_db: ChatDB,
     chat_meta_db_name: str,
 ) -> None:
-    """Persist the latest inferred user goal to chat metadata.
+    """Persist the latest inferred request goal to chat metadata.
 
     Args:
         chat_id: Chat id to update.
-        last_user_goal: Inferred user goal from the completed turn.
+        last_request_goal: Inferred request goal from the completed turn.
         chat_db: Chat database instance.
         chat_meta_db_name: Database name for chat metadata.
     """
@@ -231,7 +242,7 @@ def set_last_user_goal(
         chat_db=chat_db,
         chat_meta_db_name=chat_meta_db_name,
     )
-    meta["last_user_goal"] = last_user_goal
+    meta["last_request_goal"] = last_request_goal
     chat_db.put(key=chat_id, value=meta, db_name=chat_meta_db_name)
 
 
