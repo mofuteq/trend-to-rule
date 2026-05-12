@@ -264,31 +264,6 @@ def select_top_k(
     return selected
 
 
-def search_and_rerank_images(
-    query: str,
-    *,
-    api_key: str | None = None,
-    include_image_descriptions: bool = True,
-    fetch_limit: int = DEFAULT_IMAGE_FETCH_LIMIT,
-    rerank_limit: int = DEFAULT_IMAGE_RERANK_LIMIT,
-) -> list[ImageSearchResult]:
-    """Fetch image candidates from Tavily, then rerank them with CLIP."""
-    candidates = search_images(
-        query,
-        limit=fetch_limit,
-        api_key=api_key,
-        include_image_descriptions=include_image_descriptions,
-    )
-    logger.info(
-        "image_search_candidates backend=tavily query=%r fetched_count=%s fetch_limit=%s",
-        unicodedata.normalize("NFKC", query).strip(),
-        len(candidates),
-        fetch_limit,
-    )
-    reranked = rerank_with_clip(query, candidates)
-    return select_top_k(reranked, k=rerank_limit)
-
-
 def _fetch_image(client: httpx.Client, item: ImageSearchResult) -> Image.Image | None:
     """Download and decode one image for CLIP scoring."""
     image_url = (item.image_url or "").strip()
