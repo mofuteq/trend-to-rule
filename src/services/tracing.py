@@ -6,7 +6,7 @@ Provides `observe`, `update_current_generation`, `update_current_trace`, and
 Credentials are read from environment variables:
 - `LANGFUSE_PUBLIC_KEY`
 - `LANGFUSE_SECRET_KEY`
-- `LANGFUSE_HOST` (default: https://cloud.langfuse.com)
+- `LANGFUSE_BASE_URL` (default: https://cloud.langfuse.com)
 
 This module only reads `os.environ`; loading `.env` is the responsibility of
 the application entry points (`core.app_config`, `services.llm_client`, and
@@ -24,6 +24,29 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 _ENABLED: bool | None = None
 _CLIENT: Any = None
+DEFAULT_LANGFUSE_BASE_URL = "https://cloud.langfuse.com"
+REPOA_TRACE_TAGS = ["repoa", "trend-to-rule", "oss-demo"]
+
+
+def get_base_url() -> str:
+    """Return the configured Langfuse endpoint."""
+    return (os.getenv("LANGFUSE_BASE_URL") or DEFAULT_LANGFUSE_BASE_URL).strip()
+
+
+def get_repoa_trace_tags() -> list[str]:
+    """Return stable Langfuse tags used to distinguish RepoA traces."""
+    return list(REPOA_TRACE_TAGS)
+
+
+def get_repoa_trace_metadata() -> dict[str, str]:
+    """Return stable Langfuse metadata used to distinguish RepoA traces."""
+    return {
+        "app_id": "repoa",
+        "app_name": "trend-to-rule",
+        "repo": "RepoA",
+        "observability_backend": "langfuse-cloud",
+        "environment": os.getenv("APP_ENV", "development"),
+    }
 
 
 def is_enabled() -> bool:
@@ -49,7 +72,7 @@ def get_client() -> Any:
     try:
         from langfuse import Langfuse  # type: ignore[import-not-found]
 
-        host = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+        host = get_base_url()
         _CLIENT = Langfuse(
             public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
             secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
@@ -217,9 +240,12 @@ def flush() -> None:
 
 __all__ = [
     "flush",
+    "get_base_url",
     "get_client",
     "get_langchain_callback_handler",
     "get_langchain_invoke_config",
+    "get_repoa_trace_metadata",
+    "get_repoa_trace_tags",
     "is_enabled",
     "observe",
     "propagate_attributes",
