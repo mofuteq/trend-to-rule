@@ -143,6 +143,7 @@ def search_images(
 
     items: list[ImageSearchResult] = []
     seen_image_urls: set[str] = set()
+    seen_page_title_keys: set[str] = set()
     results = payload.get("results", [])
     if isinstance(results, list):
         for source_result in results:
@@ -157,6 +158,7 @@ def search_images(
                 _append_tavily_image_candidate(
                     items=items,
                     seen_image_urls=seen_image_urls,
+                    seen_page_title_keys=seen_page_title_keys,
                     image=image,
                     source_title=source_title,
                     source_url=source_url,
@@ -168,6 +170,7 @@ def search_images(
             _append_tavily_image_candidate(
                 items=items,
                 seen_image_urls=seen_image_urls,
+                seen_page_title_keys=seen_page_title_keys,
                 image=image,
                 source_title="",
                 source_url="",
@@ -281,6 +284,7 @@ def _append_tavily_image_candidate(
     *,
     items: list[ImageSearchResult],
     seen_image_urls: set[str],
+    seen_page_title_keys: set[str],
     image: object,
     source_title: str,
     source_url: str,
@@ -293,7 +297,12 @@ def _append_tavily_image_candidate(
     )
     if result is None or result.image_url in seen_image_urls:
         return
+    page_title_key = _build_page_title_dedupe_key(result)
+    if page_title_key is not None and page_title_key in seen_page_title_keys:
+        return
     seen_image_urls.add(result.image_url)
+    if page_title_key is not None:
+        seen_page_title_keys.add(page_title_key)
     items.append(result)
 
 
@@ -329,6 +338,43 @@ def _normalize_tavily_image_candidate(
         )
     except Exception:
         return None
+
+
+def _normalize_dedupe_text(value: str) -> str:
+    """Normalize text used in dedupe keys."""
+    return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
+
+
+def _build_page_title_dedupe_key(result: ImageSearchResult) -> str | None:
+    """Build a stable page+title key when both fields are available."""
+    page_url = _normalize_dedupe_url(result.page_url)
+    title = _normalize_dedupe_text(result.title)
+    if not page_url or not title:
+        return None
+    return f"{page_url}\n{title}"
+
+
+def _normalize_dedupe_url(value: str) -> str:
+    """Normalize URLs for duplicate checks without changing public fields."""
+    normalized = value.strip()
+    if not normalized:
+        return ""
+    parts = urlsplit(normalized)
+    filtered_query = [
+        (key, query_value)
+        for key, query_value in parse_qsl(parts.query, keep_blank_values=True)
+        if key not in TRACKING_QUERY_KEYS
+        and not any(key.startswith(prefix) for prefix in TRACKING_QUERY_PREFIXES)
+    ]
+    return urlunsplit(
+        (
+            parts.scheme.lower(),
+            parts.netloc.lower(),
+            parts.path.rstrip("/"),
+            urlencode(filtered_query, doseq=True),
+            "",
+        )
+    )
 
 
 @lru_cache(maxsize=1)
