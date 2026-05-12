@@ -10,6 +10,14 @@ EMERGING_RECENCY_BOOST_WEIGHT = 0.1
 VERTICAL_MATCH_BOOST_WEIGHT = 0.1
 
 
+def _get_vector_searcher() -> object | None:
+    """Return the Streamlit-cached vector searcher when initialized."""
+    try:
+        return st.session_state.get("vector_searcher")
+    except Exception:
+        return None
+
+
 def _scores(points: list[object]) -> list[float]:
     """Extract score list from points."""
     vals: list[float] = []
@@ -50,7 +58,7 @@ def retrieve_vector_results_by_queries(
     per_query_top_k: int = 5,
 ) -> dict[str, list[object]]:
     """Retrieve points per query with hybrid search + per-query MMR."""
-    if st.session_state.vector_searcher is None:
+    if _get_vector_searcher() is None:
         return {"canonical": [], "emerging": []}
     query_by_kind = {
         "canonical": canonical_query.strip(),
@@ -159,9 +167,9 @@ def hybrid_search_with_filter(
     vertical_boost_weight: float = 0.0,
 ) -> list[object]:
     """Run hybrid search with a Qdrant filter."""
-    if st.session_state.vector_searcher is None:
+    searcher = _get_vector_searcher()
+    if searcher is None:
         return []
-    searcher = st.session_state.vector_searcher
     return searcher.hybrid_search_with_filter(
         query_text=query_text,
         candidate_k=vector_candidate_k,
@@ -185,9 +193,9 @@ def qdrant_mmr_rerank_for_query(
     recency_scale_seconds: int | None = None,
 ) -> list[object]:
     """Rerank candidate IDs with Qdrant MMR for a single query."""
-    if st.session_state.vector_searcher is None or not candidate_ids:
+    searcher = _get_vector_searcher()
+    if searcher is None or not candidate_ids:
         return []
-    searcher = st.session_state.vector_searcher
     return searcher.mmr_rerank_by_ids(
         query_text=query_text,
         candidate_ids=candidate_ids,
