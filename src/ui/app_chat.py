@@ -6,7 +6,7 @@ from core.app_config import AppConfig
 from core.text_utils import normalize_text_nfkc
 from retrieval.app_retrieval import build_retrieved_results_html_table
 from services import tracing
-from services.chat import analyze_user_needs, generate_chat_title
+from services.chat import generate_chat_title
 from services.llm_client import (
     DEFAULT_OPENROUTER_MODEL,
     DEFAULT_OPENROUTER_REASONING_EFFORT,
@@ -17,11 +17,15 @@ from services.llm_client import (
 from services.chat_workflow import (
     RetrievalBundle,
     generate_assistant_response,
-    retrieve_supporting_context,
 )
 from services.image_search import ImageSearchResult
 from storage.chat_db import ChatDB
-from ui.app_state import add_turn, get_chat_meta, set_chat_title, set_last_user_goal
+from ui.app_state import (
+    add_turn,
+    get_chat_meta,
+    set_chat_title,
+    set_last_request_goal,
+)
 
 logger = logging.getLogger(__name__)
 ASSISTANT_AVATAR = ":material/auto_awesome:"
@@ -155,54 +159,41 @@ def process_user_prompt(
             st.markdown(normalized_prompt)
         with st.chat_message("assistant", avatar=ASSISTANT_AVATAR):
             with st.status("Analyzing...", expanded=False) as status:
-                user_needs = analyze_user_needs(
-                    user_prompt=normalized_prompt,
-                    last_user_goal=st.session_state.last_user_goal,
-                    history=prior_history or None,
-                )
-                st.write(user_needs)
-                status.update(label="Retrieving context...", expanded=False)
-
-                retrieval = RetrievalBundle(
-                    canonical_context="",
-                    emerging_context="",
-                    canonical_rows=[],
-                    emerging_rows=[],
-                )
-                try:
-                    retrieval = retrieve_supporting_context(
-                        user_needs,
-                        config=config,
-                    )
-                except Exception as err:
-                    st.warning(f"Vector search failed: {err}")
-
-                status.update(label="Thinking...", expanded=False)
                 assistant_response = generate_assistant_response(
                     user_prompt=normalized_prompt,
-                    user_needs=user_needs,
-                    retrieval=retrieval,
                     config=config,
-                    last_user_goal=st.session_state.last_user_goal,
+                    last_request_goal=st.session_state.last_request_goal,
                     history=prior_history,
                     thread_id=(
                         f"{st.session_state.chat_id}:{st.session_state.chat_turn}"
                     ),
+                    langfuse_session_id=st.session_state.chat_id,
+                    langfuse_user_id=user_id,
                 )
-                st.write(assistant_response.structured_claims)
-                st.write(assistant_response.structured_draft)
-                st.write(assistant_response.image_query)
-                status.update(
-                    label="Thinking complete", state="complete", expanded=False
-                )
+                request_analysis = assistant_response.request_analysis
+                retrieval = assistant_response.retrieval
+                assistant_rule = assistant_response.rule
+                st.write(request_analysis)
+                if not request_analysis.is_in_scope:
+                    status.update(
+                        label="Outside app scope", state="complete", expanded=False
+                    )
+                else:
+                    st.write(assistant_response.structured_claims)
+                    st.write(assistant_response.structured_draft)
+                    st.write(assistant_response.image_query)
+                    status.update(
+                        label="Thinking complete", state="complete", expanded=False
+                    )
 
-            stream_markdown_text(assistant_response.rule)
-            render_image_results(assistant_response.image_results)
+            stream_markdown_text(assistant_rule)
+            if request_analysis.is_in_scope:
+                render_image_results(assistant_response.image_results)
             render_retrieved_results(retrieval)
 
         add_turn(
             user_content=normalized_prompt,
-            assistant_content=assistant_response.rule,
+            assistant_content=assistant_rule,
             chat_db=chat_db,
             chat_db_name=config.chat_db_name,
             chat_meta_db_name=config.chat_meta_db_name,
@@ -226,29 +217,37 @@ def process_user_prompt(
                     )
             except Exception as err:
                 logger.warning("Failed to generate chat title: %s", err)
-        st.session_state.last_user_goal = user_needs.user_goal
-        set_last_user_goal(
+        st.session_state.last_request_goal = request_analysis.request_goal
+        set_last_request_goal(
             chat_id=st.session_state.chat_id,
-            last_user_goal=user_needs.user_goal,
+            last_request_goal=request_analysis.request_goal,
             chat_db=chat_db,
             chat_meta_db_name=config.chat_meta_db_name,
         )
         if st.session_state.chat_id not in user_chat_ids:
             user_chat_ids.append(st.session_state.chat_id)
-            chat_db.put(key=user_id, value=user_chat_ids,
-                        db_name=config.user_db_name)
+            chat_db.put(
+                key=user_id,
+                value=user_chat_ids,
+                db_name=config.user_db_name,
+            )
 
         tracing.update_current_trace(
             output={
-                "rule": assistant_response.rule,
-                "user_goal": user_needs.user_goal,
-                "vertical": user_needs.vertical,
-                "candidate_queries": user_needs.candidate_queries.model_dump(),
+                "rule": assistant_rule,
+                "request_goal": request_analysis.request_goal,
+                "vertical": request_analysis.vertical,
+                "is_in_scope": request_analysis.is_in_scope,
+                "candidate_queries": request_analysis.candidate_queries.model_dump(),
                 "structured_claims": (
                     assistant_response.structured_claims.model_dump()
+                    if assistant_response.structured_claims is not None
+                    else None
                 ),
                 "structured_draft": (
                     assistant_response.structured_draft.model_dump()
+                    if assistant_response.structured_draft is not None
+                    else None
                 ),
                 "image_query": assistant_response.image_query,
                 "image_results": [
@@ -263,21 +262,27 @@ def process_user_prompt(
                 "trend-to-rule",
                 "chat_turn",
                 f"workflow:{WORKFLOW_VERSION}",
-                f"vertical:{user_needs.vertical}",
+                f"vertical:{request_analysis.vertical}",
+                f"in_scope:{request_analysis.is_in_scope}",
             ],
             metadata={
                 "chat_turn": st.session_state.chat_turn,
-                "user_goal": user_needs.user_goal,
-                "vertical": user_needs.vertical,
+                "request_goal": request_analysis.request_goal,
+                "vertical": request_analysis.vertical,
+                "is_in_scope": request_analysis.is_in_scope,
                 "image_query": assistant_response.image_query,
                 "image_result_count": len(assistant_response.image_results),
                 "canonical_hits": len(retrieval.canonical_rows),
                 "emerging_hits": len(retrieval.emerging_rows),
-                "canonical_claim_count": len(
-                    assistant_response.structured_claims.canonical_claims
+                "canonical_claim_count": (
+                    len(assistant_response.structured_claims.canonical_claims)
+                    if assistant_response.structured_claims is not None
+                    else 0
                 ),
-                "emerging_claim_count": len(
-                    assistant_response.structured_claims.emerging_claims
+                "emerging_claim_count": (
+                    len(assistant_response.structured_claims.emerging_claims)
+                    if assistant_response.structured_claims is not None
+                    else 0
                 ),
                 "model_params": {
                     "model": DEFAULT_OPENROUTER_MODEL,

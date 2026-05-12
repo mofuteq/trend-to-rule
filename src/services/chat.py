@@ -6,8 +6,8 @@ from typing import Literal
 from pydantic_ai.messages import ModelMessage
 
 from core.models import (
-    UserNeeds,
-    UserGoal,
+    RequestAnalysis,
+    RequestGoal,
     ArticleAttribute,
     StructuredDraft,
     SearchQuery,
@@ -22,10 +22,10 @@ from services.prompt_service import (
     TEMPLATE_DECISION_SUPPORT,
     TEMPLATE_IMAGE_QUERY,
     TEMPLATE_INFER_ARTICLE,
+    TEMPLATE_REQUEST_ANALYSIS,
     TEMPLATE_SEARCH_QUERY,
     TEMPLATE_STRUCTURED_CLAIMS,
     TEMPLATE_STRUCTURED_DRAFT,
-    TEMPLATE_USER_NEEDS,
 )
 
 ATTRIBUTE_INFERENCE_MODEL = "google/gemini-2.5-flash-lite"
@@ -34,15 +34,15 @@ ATTRIBUTE_INFERENCE_MODEL = "google/gemini-2.5-flash-lite"
 @tracing.observe(name="generate_search_query")
 def generate_search_query(
     user_prompt: str,
-    user_goal: str,
-    last_user_goal: str | None = None
+    request_goal: str,
+    last_request_goal: str | None = None
 ) -> SearchQuery:
     """Generate canonical/emerging search queries from user input.
 
     Args:
         user_prompt (str): Raw user prompt.
-        user_goal (str): Inferred current user goal.
-        last_user_goal (str | None): Previous user goal for continuity.
+        request_goal (str): Inferred current request goal.
+        last_request_goal (str | None): Previous request goal for continuity.
 
     Returns:
         SearchQuery: Structured query set including canonical and emerging queries.
@@ -54,8 +54,8 @@ def generate_search_query(
         ),
         system_prompt=TEMPLATE_SEARCH_QUERY
         .module.system(
-            user_goal=user_goal,
-            last_user_goal=last_user_goal,
+            request_goal=request_goal,
+            last_request_goal=last_request_goal,
             now=datetime.now()
         ),
         response_model=SearchQuery,
@@ -97,49 +97,49 @@ def infer_attribute(
     return res
 
 
-@tracing.observe(name="analyze_user_needs")
-def analyze_user_needs(
+@tracing.observe(name="analyze_request")
+def analyze_request(
     user_prompt: str,
-    last_user_goal: str | None = None,
+    last_request_goal: str | None = None,
     history: list[ModelMessage] | None = None,
-) -> UserNeeds:
-    """Analyze user intent and return normalized user needs.
+) -> RequestAnalysis:
+    """Analyze the user request for intent, retrieval planning, and scope gating.
 
     Args:
         user_prompt (str): Raw user input text.
-        last_user_goal (str | None): Previous inferred user goal for context.
+        last_request_goal (str | None): Previous inferred request goal for context.
         history (list[ModelMessage] | None): Prior conversation history for multi-turn context.
 
     Returns:
-        UserNeeds: Structured user-needs object inferred by the model.
+        RequestAnalysis: Structured request analysis inferred by the model.
     """
-    user_goal = create(
-        user_prompt=TEMPLATE_USER_NEEDS
+    request_goal = create(
+        user_prompt=TEMPLATE_REQUEST_ANALYSIS
         .module.user(
             user_prompt=user_prompt
         ),
-        system_prompt=TEMPLATE_USER_NEEDS
+        system_prompt=TEMPLATE_REQUEST_ANALYSIS
         .module.system(
-            last_user_goal=last_user_goal
+            last_request_goal=last_request_goal
         ),
-        response_model=UserGoal,
+        response_model=RequestGoal,
         reasoning_effort="medium",
         history=history,
     )
     search_query = generate_search_query(
         user_prompt=user_prompt,
-        user_goal=user_goal.user_goal,
-        last_user_goal=last_user_goal
+        request_goal=request_goal.request_goal,
+        last_request_goal=last_request_goal,
     )
     vertical = infer_attribute(
         input_text=user_prompt,
-        task="user_prompt"
+        task="user_prompt",
     ).vertical
-    return UserNeeds(
-        user_goal=user_goal.user_goal,
+    return RequestAnalysis(
+        request_goal=request_goal.request_goal,
         candidate_queries=search_query,
         vertical=vertical,
-        reason=user_goal.reason
+        is_in_scope=request_goal.is_in_scope,
     )
 
 
@@ -147,14 +147,14 @@ def analyze_user_needs(
 def extract_claims(
     canonical_context: str,
     emerging_context: str,
-    user_goal: str,
+    request_goal: str,
 ) -> StructuredClaims:
     """Extract structured claims from canonical and emerging contexts.
 
     Args:
         canonical_context (str): Retrieved canonical context text.
         emerging_context (str): Retrieved emerging context text.
-        user_goal (str): Current inferred user goal.
+        request_goal (str): Current inferred request goal.
 
     Returns:
         StructuredClaims: Structured claims generated from the provided contexts.
@@ -162,7 +162,7 @@ def extract_claims(
     res = create(
         user_prompt=TEMPLATE_STRUCTURED_CLAIMS
         .module.system(
-            user_goal=user_goal,
+            request_goal=request_goal,
             now=datetime.now()
         ),
         system_prompt=TEMPLATE_STRUCTURED_CLAIMS
@@ -177,7 +177,7 @@ def extract_claims(
 
 
 __all__ = [
-    "analyze_user_needs",
+    "analyze_request",
     "extract_claims",
     "extract_structured_draft",
     "generate_chat_title",
@@ -192,14 +192,14 @@ __all__ = [
 def extract_structured_draft(
     canonical_claims: list[Claim],
     emerging_claims: list[Claim],
-    user_goal: str,
+    request_goal: str,
 ) -> StructuredDraft:
     """Generate structured draft from user prompt and retrieved context.
 
     Args:
         canonical_claims (list[Claim]): Canonical claims extracted from retrieved context.
         emerging_claims (list[Claim]): Emerging claims extracted from retrieved context.
-        user_goal (str): Current inferred user goal.
+        request_goal (str): Current inferred request goal.
 
     Returns:
         StructuredDraft: Structured draft extracted from prompt and context.
@@ -218,7 +218,7 @@ def extract_structured_draft(
         ),
         system_prompt=TEMPLATE_STRUCTURED_DRAFT
         .module.system(
-            user_goal=user_goal,
+            request_goal=request_goal,
             now=datetime.now()
         ),
         response_model=StructuredDraft,
@@ -230,19 +230,19 @@ def extract_structured_draft(
 @tracing.observe(name="generate_decision_support")
 def generate_decision_support(
     user_prompt: str,
-    user_goal: str,
+    request_goal: str,
     structured_draft: StructuredDraft,
     history: list[ModelMessage] | None = None,
-    last_user_goal: str | None = None,
+    last_request_goal: str | None = None,
 ) -> str:
     """Generate decision-support output from the structured draft.
 
     Args:
         user_prompt (str): Original user prompt.
-        user_goal (str): Current inferred user goal.
+        request_goal (str): Current inferred request goal.
         structured_draft (StructuredDraft): Structured draft generated from retrieval context.
         history (list[ModelMessage] | None): Prior chat history to preserve conversational context.
-        last_user_goal (str | None): Previous inferred user goal.
+        last_request_goal (str | None): Previous inferred request goal.
 
     Returns:
         str: Decision-support result returned by the model.
@@ -255,8 +255,8 @@ def generate_decision_support(
         ),
         system_prompt=TEMPLATE_DECISION_SUPPORT
         .module.system(
-            user_goal=user_goal,
-            last_user_goal=last_user_goal,
+            request_goal=request_goal,
+            last_request_goal=last_request_goal,
             now=datetime.now()
         ),
         history=history,
@@ -266,13 +266,13 @@ def generate_decision_support(
 
 @tracing.observe(name="generate_query")
 def generate_query(
-    user_goal: str,
+    request_goal: str,
     rule: str,
 ) -> ExampleQuerySpec:
     """Generate example query specifications from a synthesized rule.
 
     Args:
-        user_goal (str): Current inferred user goal.
+        request_goal (str): Current inferred request goal.
         rule (str): Synthesized rule text used as the query-generation source.
 
     Returns:
@@ -285,7 +285,7 @@ def generate_query(
         ),
         system_prompt=TEMPLATE_IMAGE_QUERY
         .module.system(
-            user_goal=user_goal
+            request_goal=request_goal
         ),
         response_model=ExampleQuerySpec,
         reasoning_effort="low",

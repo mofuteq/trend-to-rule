@@ -1,12 +1,13 @@
 # Example Output (Full Pipeline)
 
-## User Needs
+## Request Analysis
 
 ```json
 {
-  "user_goal": "Describe the typical fashion style and characteristics prevalent in Silicon Valley, including common attire and overall aesthetic.",
+  "request_goal": "Describe the typical fashion style and characteristics prevalent in Silicon Valley, including common attire and overall aesthetic.",
   "candidate_queries": "SearchQuery(canonical_query='Silicon Valley tech industry dress code norms', emerging_query='Silicon Valley fashion evolution recent trends')",
-  "reason": "The user is asking for information about a specific regional fashion trend, implying a need to understand its defining features and practical aspects."
+  "vertical": "unisex",
+  "is_in_scope": true
 }
 ```
 

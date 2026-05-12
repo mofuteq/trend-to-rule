@@ -12,7 +12,12 @@ from pydantic_ai.messages import ModelMessage
 from psycopg_pool import ConnectionPool
 
 from core.app_config import AppConfig
-from core.models import ExampleQuerySpec, StructuredClaims, StructuredDraft, UserNeeds
+from core.models import (
+    ExampleQuerySpec,
+    RequestAnalysis,
+    StructuredClaims,
+    StructuredDraft,
+)
 from core.query_utils import render_example_query
 from core.text_utils import normalize_text_nfkc
 from retrieval.app_retrieval import (
@@ -22,6 +27,7 @@ from retrieval.app_retrieval import (
 )
 from services import tracing
 from services.chat import (
+    analyze_request,
     extract_claims,
     extract_structured_draft,
     generate_decision_support,
@@ -30,19 +36,26 @@ from services.chat import (
 from services.image_search import ImageSearchResult, search_and_rerank_images
 
 logger = logging.getLogger(__name__)
+OUT_OF_SCOPE_MESSAGE = (
+    "This app is focused on fashion, styling, and trend analysis.\n"
+    "This request appears to be outside that scope, so I did not run retrieval or "
+    "reasoning.\n"
+    "Please reframe the question in a fashion, styling, outfit, apparel, visual "
+    "reference, or trend-related context."
+)
 
 
-def _build_fallback_image_query(user_needs: UserNeeds, rule: str) -> str:
+def _build_fallback_image_query(request_analysis: RequestAnalysis, rule: str) -> str:
     """Build a safe fallback image query when structured rendering fails.
 
     Args:
-        user_needs: Structured user-needs object.
+        request_analysis: Structured request-analysis object.
         rule: Final synthesized assistant rule.
 
     Returns:
         str: A conservative image-search query string.
     """
-    vertical = str(getattr(user_needs, "vertical", "") or "").strip().lower()
+    vertical = str(getattr(request_analysis, "vertical", "") or "").strip().lower()
     if vertical == "mens":
         prefix = "menswear"
     elif vertical == "womens":
@@ -68,36 +81,47 @@ class RetrievalBundle(BaseModel):
     emerging_rows: list[dict[str, str]] = Field(default_factory=list)
 
 
+def _empty_retrieval_bundle() -> RetrievalBundle:
+    return RetrievalBundle(
+        canonical_context="",
+        emerging_context="",
+        canonical_rows=[],
+        emerging_rows=[],
+    )
+
+
 class AssistantResponseBundle(BaseModel):
     """All derived assistant artifacts for a single user prompt."""
 
-    structured_claims: StructuredClaims
-    structured_draft: StructuredDraft
+    request_analysis: RequestAnalysis
+    retrieval: RetrievalBundle = Field(default_factory=_empty_retrieval_bundle)
+    structured_claims: StructuredClaims | None = None
+    structured_draft: StructuredDraft | None = None
     rule: str
-    image_query: str
+    image_query: str = ""
     image_results: list[ImageSearchResult] = Field(default_factory=list)
 
 
 @tracing.observe(name="retrieve_supporting_context")
 def retrieve_supporting_context(
-    user_needs: UserNeeds,
+    request_analysis: RequestAnalysis,
     *,
     config: AppConfig,
 ) -> RetrievalBundle:
-    """Retrieve canonical and emerging context for the current user needs.
+    """Retrieve canonical and emerging context for the current request.
 
     Args:
-        user_needs: Structured user-needs object containing candidate queries.
+        request_analysis: Structured request-analysis object containing candidate queries.
         config: App runtime config.
 
     Returns:
         RetrievalBundle: Retrieved contexts and table rows for display.
     """
-    candidate_queries = user_needs.candidate_queries
+    candidate_queries = request_analysis.candidate_queries
     retrieved = retrieve_vector_results_by_queries(
         canonical_query=str(candidate_queries.canonical_query or ""),
         emerging_query=str(candidate_queries.emerging_query or ""),
-        user_vertical=user_needs.vertical,
+        user_vertical=request_analysis.vertical,
         vector_candidate_k=config.vector_candidate_k,
         mmr_diversity=config.vector_mmr_diversity,
         per_query_top_k=config.vector_per_query_top_k,
@@ -118,17 +142,17 @@ class AssistantResponseState(BaseModel):
     Each node progressively populates its own fields on the state as the graph
     advances, so most fields are absent at earlier steps and default to
     ``None`` (or empty containers). The required input fields (``user_prompt``,
-    ``user_needs``, ``retrieval``, ``config``, ``last_user_goal``, ``history``)
+    ``config``, ``last_request_goal``, and ``history``)
     are always supplied in the initial state passed to ``invoke()``.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     user_prompt: str | None = None
-    user_needs: UserNeeds | None = None
+    request_analysis: RequestAnalysis | None = None
     retrieval: RetrievalBundle | None = None
     config: AppConfig | None = None
-    last_user_goal: str | None = None
+    last_request_goal: str | None = None
     history: list[ModelMessage] | None = None
     structured_claims: StructuredClaims | None = None
     structured_draft: StructuredDraft | None = None
@@ -138,11 +162,51 @@ class AssistantResponseState(BaseModel):
     image_results: list[ImageSearchResult] = Field(default_factory=list)
 
 
+def _node_analyze_request(state: AssistantResponseState) -> dict:
+    request_analysis = analyze_request(
+        user_prompt=state.user_prompt,
+        last_request_goal=state.last_request_goal,
+        history=state.history,
+    )
+    return {"request_analysis": request_analysis}
+
+
+def _node_route_by_scope(state: AssistantResponseState) -> dict:
+    return {}
+
+
+def _route_by_scope(state: AssistantResponseState) -> str:
+    if state.request_analysis and state.request_analysis.is_in_scope:
+        return "in_scope"
+    return "out_of_scope"
+
+
+def _node_out_of_scope_response(state: AssistantResponseState) -> dict:
+    return {
+        "retrieval": _empty_retrieval_bundle(),
+        "rule": OUT_OF_SCOPE_MESSAGE,
+        "image_query": "",
+        "image_results": [],
+    }
+
+
+def _node_retrieve_supporting_context(state: AssistantResponseState) -> dict:
+    retrieval = _empty_retrieval_bundle()
+    try:
+        retrieval = retrieve_supporting_context(
+            state.request_analysis,
+            config=state.config,
+        )
+    except Exception as err:
+        logger.warning("Vector search failed: %s", err)
+    return {"retrieval": retrieval}
+
+
 def _node_extract_claims(state: AssistantResponseState) -> dict:
     structured_claims = extract_claims(
         canonical_context=state.retrieval.canonical_context,
         emerging_context=state.retrieval.emerging_context,
-        user_goal=state.user_needs.user_goal,
+        request_goal=state.request_analysis.request_goal,
     )
     return {"structured_claims": structured_claims}
 
@@ -151,7 +215,7 @@ def _node_extract_structured_draft(state: AssistantResponseState) -> dict:
     structured_draft = extract_structured_draft(
         canonical_claims=state.structured_claims.canonical_claims,
         emerging_claims=state.structured_claims.emerging_claims,
-        user_goal=state.user_needs.user_goal,
+        request_goal=state.request_analysis.request_goal,
     )
     return {"structured_draft": structured_draft}
 
@@ -159,8 +223,8 @@ def _node_extract_structured_draft(state: AssistantResponseState) -> dict:
 def _node_generate_decision_support(state: AssistantResponseState) -> dict:
     decision_support = generate_decision_support(
         user_prompt=state.user_prompt,
-        user_goal=state.user_needs.user_goal,
-        last_user_goal=state.last_user_goal,
+        request_goal=state.request_analysis.request_goal,
+        last_request_goal=state.last_request_goal,
         history=state.history,
         structured_draft=state.structured_draft,
     )
@@ -170,7 +234,7 @@ def _node_generate_decision_support(state: AssistantResponseState) -> dict:
 
 def _node_generate_query(state: AssistantResponseState) -> dict:
     query_spec = generate_query(
-        user_goal=state.user_needs.user_goal,
+        request_goal=state.request_analysis.request_goal,
         rule=state.rule,
     )
     return {"query_spec": query_spec}
@@ -182,7 +246,7 @@ def _node_render_image_query(state: AssistantResponseState) -> dict:
         image_query = render_example_query(query_spec)
     except ValueError as err:
         image_query = _build_fallback_image_query(
-            user_needs=state.user_needs,
+            request_analysis=state.request_analysis,
             rule=state.rule,
         )
         logger.warning(
@@ -226,6 +290,10 @@ def _build_assistant_response_graph_builder() -> StateGraph:
     here and are planned as future Agentic RAR work on top of this graph.
     """
     graph = StateGraph(AssistantResponseState)
+    graph.add_node("analyze_request", _node_analyze_request)
+    graph.add_node("route_by_scope", _node_route_by_scope)
+    graph.add_node("out_of_scope_response", _node_out_of_scope_response)
+    graph.add_node("retrieve_supporting_context", _node_retrieve_supporting_context)
     graph.add_node("extract_claims", _node_extract_claims)
     graph.add_node("extract_structured_draft", _node_extract_structured_draft)
     graph.add_node("generate_decision_support", _node_generate_decision_support)
@@ -233,7 +301,18 @@ def _build_assistant_response_graph_builder() -> StateGraph:
     graph.add_node("render_image_query", _node_render_image_query)
     graph.add_node("search_images", _node_search_images)
 
-    graph.add_edge(START, "extract_claims")
+    graph.add_edge(START, "analyze_request")
+    graph.add_edge("analyze_request", "route_by_scope")
+    graph.add_conditional_edges(
+        "route_by_scope",
+        _route_by_scope,
+        {
+            "out_of_scope": "out_of_scope_response",
+            "in_scope": "retrieve_supporting_context",
+        },
+    )
+    graph.add_edge("out_of_scope_response", END)
+    graph.add_edge("retrieve_supporting_context", "extract_claims")
     graph.add_edge("extract_claims", "extract_structured_draft")
     graph.add_edge("extract_structured_draft", "generate_decision_support")
     graph.add_edge("generate_decision_support", "generate_query")
@@ -288,44 +367,63 @@ def _get_compiled_graph():
 def generate_assistant_response(
     user_prompt: str,
     *,
-    user_needs: UserNeeds,
-    retrieval: RetrievalBundle,
     config: AppConfig,
-    last_user_goal: str | None,
+    last_request_goal: str | None,
     history: list[ModelMessage] | None,
     thread_id: str | None = None,
+    langfuse_session_id: str | None = None,
+    langfuse_user_id: str | None = None,
 ) -> AssistantResponseBundle:
-    """Generate assistant-side outputs from retrieval and user intent.
+    """Generate assistant-side outputs from an end-to-end LangGraph workflow.
 
     Args:
         user_prompt: Raw user prompt.
-        user_needs: Structured user-needs object.
-        retrieval: Retrieved context bundle.
         config: App runtime config.
-        last_user_goal: Previous inferred user goal.
+        last_request_goal: Previous inferred request goal.
         history: Prior chat history.
         thread_id: LangGraph checkpoint thread id; one is generated when omitted
             so each invocation starts from a clean state.
+        langfuse_session_id: Chat session id used only for Langfuse grouping.
+        langfuse_user_id: User id used only for Langfuse grouping.
 
     Returns:
         AssistantResponseBundle: Claims, draft, final rule, and related images.
     """
     initial_state = AssistantResponseState(
         user_prompt=user_prompt,
-        user_needs=user_needs,
-        retrieval=retrieval,
         config=config,
-        last_user_goal=last_user_goal,
+        last_request_goal=last_request_goal,
         history=history,
     )
-    invoke_config = {
-        "configurable": {"thread_id": thread_id or str(uuid.uuid4())},
+    resolved_thread_id = thread_id or str(uuid.uuid4())
+    tags = ["trend-to-rule", "chat_workflow", "langgraph"]
+    metadata = {
+        "chat_id": langfuse_session_id,
+        "langfuse_session_id": langfuse_session_id,
+        "langfuse_user_id": langfuse_user_id,
+        "thread_id": resolved_thread_id,
     }
-    final_state = _get_compiled_graph().invoke(initial_state, invoke_config)
+    metadata = {key: value for key, value in metadata.items() if value is not None}
+    invoke_config = {
+        "configurable": {"thread_id": resolved_thread_id},
+        **tracing.get_langchain_invoke_config(
+            run_name="chat_workflow",
+            tags=tags,
+            metadata=metadata,
+        ),
+    }
+    with tracing.propagate_attributes(
+        session_id=langfuse_session_id,
+        user_id=langfuse_user_id,
+        tags=tags,
+    ):
+        final_state = _get_compiled_graph().invoke(initial_state, invoke_config)
     return AssistantResponseBundle(
-        structured_claims=final_state["structured_claims"],
-        structured_draft=final_state["structured_draft"],
-        rule=final_state["rule"],
-        image_query=final_state["image_query"],
-        image_results=final_state["image_results"],
+        request_analysis=final_state["request_analysis"],
+        retrieval=final_state.get("retrieval") or _empty_retrieval_bundle(),
+        structured_claims=final_state.get("structured_claims"),
+        structured_draft=final_state.get("structured_draft"),
+        rule=final_state.get("rule") or "",
+        image_query=final_state.get("image_query") or "",
+        image_results=final_state.get("image_results") or [],
     )

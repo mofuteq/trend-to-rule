@@ -11,16 +11,16 @@ class SearchQuery(BaseModel):
     emerging_query: str
 
 
-class UserGoal(BaseModel):
-    user_goal: str
-    reason: str
+class RequestGoal(BaseModel):
+    request_goal: str
+    is_in_scope: bool
 
 
-class UserNeeds(BaseModel):
-    user_goal: str
+class RequestAnalysis(BaseModel):
+    request_goal: str
     candidate_queries: SearchQuery
     vertical: VERTICAL
-    reason: str
+    is_in_scope: bool
 
 
 class ArticleAttribute(BaseModel):
