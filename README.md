@@ -63,7 +63,7 @@ similarity.
 
 Example:
 
-`rule -> ExampleQuerySpec -> rendered query -> SearXNG image search -> multilingual CLIP rerank -> visual reference cards`
+`rule -> ExampleQuerySpec -> rendered query -> Tavily visual search -> multilingual CLIP rerank -> visual reference cards`
 
 This keeps the search step:
 
@@ -189,8 +189,6 @@ The codebase is organized to mirror the pipeline described above.
 trend-to-rule/
 ├── .data/
 ├── docker-compose.yml
-├── searxng/
-│   └── settings.yml
 ├── src/
 │   ├── app.py
 │   ├── Dockerfile
@@ -208,8 +206,7 @@ trend-to-rule/
 ```
 
 - `.data/`: Local runtime artifacts such as LMDB files, JSONL debug outputs, chat state, Qdrant storage, logs, and shared Hugging Face model caches.
-- `docker-compose.yml`: Local multi-service runtime for the app, Qdrant, and SearXNG.
-- `searxng/`: Local SearXNG configuration used by Docker Compose.
+- `docker-compose.yml`: Local multi-service runtime for the app, Qdrant, and LangGraph checkpoint Postgres.
 - `src/.env`: Local environment variables for app and pipeline runs.
 - `src/Dockerfile`: Container image definition for the Streamlit app.
 - `src/core/`: Shared configuration, domain models, and reusable query/text/template helpers.
@@ -269,9 +266,10 @@ VECTOR_DEVICE=auto
 VECTOR_CANDIDATE_K=50
 VECTOR_PER_QUERY_TOP_K=5
 VECTOR_MMR_DIVERSITY=0.3
-SEARXNG_BASE_URL=http://localhost:8008
-SEARXNG_IMAGE_FETCH_LIMIT=10
-SEARXNG_IMAGE_LIMIT=3
+TAVILY_API_KEY=
+TAVILY_IMAGE_FETCH_LIMIT=10
+TAVILY_IMAGE_LIMIT=3
+TAVILY_INCLUDE_IMAGE_DESCRIPTIONS=true
 CLIP_TEXT_MODEL_NAME=sentence-transformers/clip-ViT-B-32-multilingual-v1
 CLIP_IMAGE_MODEL_NAME=sentence-transformers/clip-ViT-B-32
 
@@ -299,9 +297,10 @@ Notes:
 - `OPENROUTER_MODEL`: Default OpenRouter model name. Defaults to `google/gemini-3-flash-preview`.
 - `OPENROUTER_REASONING_EFFORT`: Reasoning level forwarded to OpenRouter model settings. Supported values are `minimal`, `low`, `medium`, and `high`.
 - `VECTOR_QDRANT_URL`: Qdrant endpoint URL (default: `http://localhost:6333`).
-- `SEARXNG_BASE_URL`: Optional SearXNG endpoint for app-side web search integration.
-- `SEARXNG_IMAGE_FETCH_LIMIT`: Number of raw image candidates fetched from SearXNG before CLIP reranking.
-- `SEARXNG_IMAGE_LIMIT`: Number of final image cards shown after CLIP reranking.
+- `TAVILY_API_KEY`: Set this to enable Tavily visual reference cards. Leave it empty to skip Tavily visual retrieval while keeping text answers working.
+- `TAVILY_IMAGE_FETCH_LIMIT`: Number of raw Tavily image candidates normalized before CLIP reranking.
+- `TAVILY_IMAGE_LIMIT`: Number of final image cards shown after CLIP reranking.
+- `TAVILY_INCLUDE_IMAGE_DESCRIPTIONS`: Whether Tavily should return image descriptions when available.
 - `CLIP_TEXT_MODEL_NAME`: Hugging Face model ID, not a filesystem path. This Sentence Transformers model embeds rendered image-search text queries. The default multilingual CLIP text encoder supports non-English queries.
 - `CLIP_IMAGE_MODEL_NAME`: Hugging Face model ID, not a filesystem path. This Sentence Transformers model embeds image candidates in the same CLIP space as the text model.
 - `HF_HOME` / `HF_HUB_CACHE` / `TRANSFORMERS_CACHE` / `SENTENCE_TRANSFORMERS_HOME`: Shared Hugging Face cache paths. Keep `TRANSFORMERS_CACHE` and `SENTENCE_TRANSFORMERS_HOME` aligned with `HF_HUB_CACHE` so BGE-M3 and Sentence Transformers CLIP models are stored under the same hub cache root, for example `.data/huggingface/hub/models--sentence-transformers--clip-ViT-B-32`.
@@ -315,15 +314,9 @@ Notes:
 
 `LANGGRAPH_POSTGRES_PASSWORD` is optional for Docker Compose and defaults to `postgres`. `LANGGRAPH_POSTGRES_POOL_MAX` is optional and defaults to `10`.
 
-SearXNG JSON response example:
-
-```bash
-curl "http://localhost:8008/search?q=silicon+valley+fashion&format=json"
-```
-
 ## Run With Docker Compose
 
-Start the Streamlit app, Qdrant, SearXNG, and the LangGraph checkpoint Postgres together with the bundled Compose file:
+Start the Streamlit app, Qdrant, and the LangGraph checkpoint Postgres together with the bundled Compose file:
 
 ```bash
 docker compose up -d
@@ -333,7 +326,6 @@ Services will be available at:
 
 - Streamlit app: `http://localhost:8501`
 - Qdrant: `http://localhost:6333`
-- SearXNG: `http://localhost:8008`
 - LangGraph checkpoint Postgres: `localhost:5433` -> container `langgraph-postgres:5432`
 
 To stop it:
@@ -347,8 +339,7 @@ Compose details:
 - The app image is built from [`src/Dockerfile`](./src/Dockerfile) using `debian:stable-slim`.
 - The app is started with `uv run streamlit run src/app.py`.
 - The app connects to Qdrant over the Compose network using `http://qdrant:6333`.
-- The app can reach SearXNG over the Compose network using `http://searxng:8080`.
-- SearXNG is configured via [`searxng/settings.yml`](./searxng/settings.yml), allows `format=json` responses, and uses a non-default `server.secret_key`.
+- Set `TAVILY_API_KEY` to enable Tavily visual reference cards. Leave it empty to skip Tavily visual retrieval while keeping text answers working.
 - Local runtime data is mounted from `.data/` into the container at `/app/.data`, including Qdrant storage, logs, and shared Hugging Face model caches.
 - Environment variables are loaded from `src/.env` via `env_file`.
 - LangGraph checkpoints are persisted in the dedicated `langgraph-postgres` service.

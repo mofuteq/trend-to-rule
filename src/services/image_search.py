@@ -3,20 +3,18 @@ from functools import lru_cache
 from io import BytesIO
 import logging
 import os
+from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
-import torch
 from core.hf_cache import configure_huggingface_cache
 from PIL import Image
 from pydantic import BaseModel, field_validator
 
 configure_huggingface_cache()
 
-from sentence_transformers import SentenceTransformer
 
-
-DEFAULT_SEARXNG_BASE_URL = "http://localhost:8008"
+DEFAULT_TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 DEFAULT_CLIP_MODEL_FAMILY = "sentence-transformers/clip-ViT-B-32"
 DEFAULT_CLIP_TEXT_MODEL_NAME = os.getenv(
     "CLIP_TEXT_MODEL_NAME",
@@ -48,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 
 class ImageSearchResult(BaseModel):
-    """Normalized image-search result returned from SearXNG."""
+    """Normalized image-search result returned from the visual search backend."""
 
     title: str
     page_url: str
@@ -87,62 +85,97 @@ def search_images(
     query: str,
     *,
     limit: int | None = None,
-    base_url: str = DEFAULT_SEARXNG_BASE_URL,
+    api_key: str | None = None,
+    include_image_descriptions: bool = True,
+    search_url: str = DEFAULT_TAVILY_SEARCH_URL,
 ) -> list[ImageSearchResult]:
-    """Return deduplicated image-search results from SearXNG.
+    """Return deduplicated image-search results from Tavily.
 
     Args:
         query: User search query string.
         limit: Optional maximum number of deduplicated results to return.
-        base_url: SearXNG base URL.
+        api_key: Tavily API key. Falls back to TAVILY_API_KEY.
+        include_image_descriptions: Request Tavily image descriptions when true.
+        search_url: Tavily Search API endpoint.
 
     Returns:
         A list of normalized image-search results.
     """
-    normalized_query = unicodedata.normalize("NFKC", query)
-    items: list[ImageSearchResult] = []
-    seen_image_urls: set[str] = set()
-    per_page = 20 if limit is None else max(limit * 2, 20)
-    max_pages = 5 if limit is not None else 1
+    normalized_query = unicodedata.normalize("NFKC", query).strip()
+    resolved_api_key = (
+        os.getenv("TAVILY_API_KEY", "") if api_key is None else api_key
+    ).strip()
+    if not normalized_query:
+        return []
+    if not resolved_api_key:
+        logger.warning("Tavily image search skipped: TAVILY_API_KEY is not configured")
+        return []
 
-    with httpx.Client() as client:
-        for page in range(1, max_pages + 1):
-            response = client.get(
-                f"{base_url.rstrip('/')}/search",
-                params={
-                    "q": normalized_query,
-                    "format": "json",
-                    "categories": "images",
-                    "pageno": page,
-                    "count": per_page,
+    max_results = max(1, min(limit or DEFAULT_IMAGE_FETCH_LIMIT, 10))
+    try:
+        with httpx.Client() as client:
+            response = client.post(
+                search_url,
+                json={
+                    "query": normalized_query,
+                    "include_images": True,
+                    "include_image_descriptions": include_image_descriptions,
+                    "include_answer": False,
+                    "include_raw_content": False,
+                    "search_depth": "basic",
+                    "max_results": max_results,
                 },
-                headers=DEFAULT_HEADERS,
+                headers={
+                    **DEFAULT_HEADERS,
+                    "Authorization": f"Bearer {resolved_api_key}",
+                },
                 timeout=30.0,
             )
             response.raise_for_status()
-            results = response.json().get("results", [])
-            if not results:
-                break
-            for item in results:
-                try:
-                    result = ImageSearchResult(
-                        title=str(item.get("title", "")),
-                        page_url=str(item.get("url", "")),
-                        image_url=str(item.get("img_src", "")),
-                        thumbnail_url=str(item.get("thumbnail_src", "")),
-                        source=str(item.get("source", "")),
-                        engine=str(item.get("engine", "")),
-                    )
-                except Exception:
-                    continue
-                if result.image_url in seen_image_urls:
-                    continue
-                seen_image_urls.add(result.image_url)
-                items.append(result)
-                if limit is not None and len(items) >= limit:
-                    return items[:limit]
-            if len(results) < per_page:
-                break
+            payload = response.json()
+    except Exception as err:
+        logger.warning("Tavily image search failed: %s", err)
+        return []
+
+    if not isinstance(payload, dict):
+        logger.warning("Tavily image search returned malformed payload: %r", payload)
+        return []
+
+    items: list[ImageSearchResult] = []
+    seen_image_urls: set[str] = set()
+    seen_page_title_keys: set[str] = set()
+    results = payload.get("results", [])
+    if isinstance(results, list):
+        for source_result in results:
+            if not isinstance(source_result, dict):
+                continue
+            source_title = str(source_result.get("title") or "").strip()
+            source_url = str(source_result.get("url") or "").strip()
+            source_images = source_result.get("images", [])
+            if not isinstance(source_images, list):
+                continue
+            for image in source_images:
+                _append_tavily_image_candidate(
+                    items=items,
+                    seen_image_urls=seen_image_urls,
+                    seen_page_title_keys=seen_page_title_keys,
+                    image=image,
+                    source_title=source_title,
+                    source_url=source_url,
+                )
+
+    top_level_images = payload.get("images", [])
+    if isinstance(top_level_images, list):
+        for image in top_level_images:
+            _append_tavily_image_candidate(
+                items=items,
+                seen_image_urls=seen_image_urls,
+                seen_page_title_keys=seen_page_title_keys,
+                image=image,
+                source_title="",
+                source_url="",
+            )
+
     if limit is None:
         return items
     return items[:limit]
@@ -177,6 +210,8 @@ def rerank_with_clip(
     if not valid_results:
         logger.info("image_rerank_no_valid_images query=%r", normalized_query)
         return candidates
+
+    import torch
 
     with torch.inference_mode():
         text_features = clip_bundle.text_model.encode(
@@ -232,29 +267,6 @@ def select_top_k(
     return selected
 
 
-def search_and_rerank_images(
-    query: str,
-    *,
-    base_url: str = DEFAULT_SEARXNG_BASE_URL,
-    fetch_limit: int = DEFAULT_IMAGE_FETCH_LIMIT,
-    rerank_limit: int = DEFAULT_IMAGE_RERANK_LIMIT,
-) -> list[ImageSearchResult]:
-    """Fetch image candidates from SearXNG, then rerank them with CLIP."""
-    candidates = search_images(
-        query,
-        limit=fetch_limit,
-        base_url=base_url,
-    )
-    logger.info(
-        "image_search_candidates query=%r fetched_count=%s fetch_limit=%s",
-        unicodedata.normalize("NFKC", query).strip(),
-        len(candidates),
-        fetch_limit,
-    )
-    reranked = rerank_with_clip(query, candidates)
-    return select_top_k(reranked, k=rerank_limit)
-
-
 def _fetch_image(client: httpx.Client, item: ImageSearchResult) -> Image.Image | None:
     """Download and decode one image for CLIP scoring."""
     image_url = (item.image_url or "").strip()
@@ -268,9 +280,108 @@ def _fetch_image(client: httpx.Client, item: ImageSearchResult) -> Image.Image |
         return None
 
 
+def _append_tavily_image_candidate(
+    *,
+    items: list[ImageSearchResult],
+    seen_image_urls: set[str],
+    seen_page_title_keys: set[str],
+    image: object,
+    source_title: str,
+    source_url: str,
+) -> None:
+    """Normalize one Tavily image value and append it when unique."""
+    result = _normalize_tavily_image_candidate(
+        image=image,
+        source_title=source_title,
+        source_url=source_url,
+    )
+    if result is None or result.image_url in seen_image_urls:
+        return
+    page_title_key = _build_page_title_dedupe_key(result)
+    if page_title_key is not None and page_title_key in seen_page_title_keys:
+        return
+    seen_image_urls.add(result.image_url)
+    if page_title_key is not None:
+        seen_page_title_keys.add(page_title_key)
+    items.append(result)
+
+
+def _normalize_tavily_image_candidate(
+    *,
+    image: object,
+    source_title: str,
+    source_url: str,
+) -> ImageSearchResult | None:
+    """Convert Tavily string/object images into the stable result model."""
+    image_url = ""
+    description = ""
+    if isinstance(image, str):
+        image_url = image.strip()
+    elif isinstance(image, dict):
+        image_url = str(image.get("url") or "").strip()
+        description = str(image.get("description") or "").strip()
+    else:
+        return None
+
+    if not image_url:
+        return None
+
+    title = description or source_title or "Visual reference"
+    try:
+        return ImageSearchResult(
+            title=title,
+            page_url=source_url,
+            image_url=image_url,
+            thumbnail_url=image_url,
+            source="tavily",
+            engine="tavily",
+        )
+    except Exception:
+        return None
+
+
+def _normalize_dedupe_text(value: str) -> str:
+    """Normalize text used in dedupe keys."""
+    return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
+
+
+def _build_page_title_dedupe_key(result: ImageSearchResult) -> str | None:
+    """Build a stable page+title key when both fields are available."""
+    page_url = _normalize_dedupe_url(result.page_url)
+    title = _normalize_dedupe_text(result.title)
+    if not page_url or not title:
+        return None
+    return f"{page_url}\n{title}"
+
+
+def _normalize_dedupe_url(value: str) -> str:
+    """Normalize URLs for duplicate checks without changing public fields."""
+    normalized = value.strip()
+    if not normalized:
+        return ""
+    parts = urlsplit(normalized)
+    filtered_query = [
+        (key, query_value)
+        for key, query_value in parse_qsl(parts.query, keep_blank_values=True)
+        if key not in TRACKING_QUERY_KEYS
+        and not any(key.startswith(prefix) for prefix in TRACKING_QUERY_PREFIXES)
+    ]
+    return urlunsplit(
+        (
+            parts.scheme.lower(),
+            parts.netloc.lower(),
+            parts.path.rstrip("/"),
+            urlencode(filtered_query, doseq=True),
+            "",
+        )
+    )
+
+
 @lru_cache(maxsize=1)
 def get_clip_bundle() -> "_ClipBundle":
     """Load and cache the CLIP model, processor, and runtime device."""
+    from sentence_transformers import SentenceTransformer
+
     cache_root = configure_huggingface_cache()
     sentence_transformers_cache = os.environ.get(
         "SENTENCE_TRANSFORMERS_HOME",
@@ -298,6 +409,8 @@ def get_clip_bundle() -> "_ClipBundle":
 
 def _resolve_clip_device() -> str:
     """Choose the best available device for CLIP inference."""
+    import torch
+
     if torch.backends.mps.is_available():
         return "mps"
     if torch.cuda.is_available():
@@ -308,8 +421,8 @@ def _resolve_clip_device() -> str:
 class _ClipBundle(BaseModel):
     """Cached CLIP runtime components."""
 
-    text_model: SentenceTransformer
-    image_model: SentenceTransformer
+    text_model: Any
+    image_model: Any
     device: str
 
     model_config = {"arbitrary_types_allowed": True}
