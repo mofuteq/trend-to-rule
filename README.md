@@ -266,7 +266,7 @@ VECTOR_DEVICE=auto
 VECTOR_CANDIDATE_K=50
 VECTOR_PER_QUERY_TOP_K=5
 VECTOR_MMR_DIVERSITY=0.3
-TAVILY_API_KEY=your-tavily-api-key
+TAVILY_API_KEY=
 TAVILY_IMAGE_FETCH_LIMIT=10
 TAVILY_IMAGE_LIMIT=3
 TAVILY_INCLUDE_IMAGE_DESCRIPTIONS=true
@@ -297,7 +297,7 @@ Notes:
 - `OPENROUTER_MODEL`: Default OpenRouter model name. Defaults to `google/gemini-3-flash-preview`.
 - `OPENROUTER_REASONING_EFFORT`: Reasoning level forwarded to OpenRouter model settings. Supported values are `minimal`, `low`, `medium`, and `high`.
 - `VECTOR_QDRANT_URL`: Qdrant endpoint URL (default: `http://localhost:6333`).
-- `TAVILY_API_KEY`: Tavily API key used by the default visual retrieval backend. If missing or invalid, image retrieval returns no cards and the text answer still completes.
+- `TAVILY_API_KEY`: Set this to enable Tavily visual reference cards. Leave it empty to skip Tavily visual retrieval while keeping text answers working.
 - `TAVILY_IMAGE_FETCH_LIMIT`: Number of raw Tavily image candidates normalized before CLIP reranking.
 - `TAVILY_IMAGE_LIMIT`: Number of final image cards shown after CLIP reranking.
 - `TAVILY_INCLUDE_IMAGE_DESCRIPTIONS`: Whether Tavily should return image descriptions when available.
@@ -339,7 +339,7 @@ Compose details:
 - The app image is built from [`src/Dockerfile`](./src/Dockerfile) using `debian:stable-slim`.
 - The app is started with `uv run streamlit run src/app.py`.
 - The app connects to Qdrant over the Compose network using `http://qdrant:6333`.
-- Tavily is the visual retrieval backend and is configured with `TAVILY_API_KEY`.
+- Set `TAVILY_API_KEY` to enable Tavily visual reference cards. Leave it empty to skip Tavily visual retrieval while keeping text answers working.
 - Local runtime data is mounted from `.data/` into the container at `/app/.data`, including Qdrant storage, logs, and shared Hugging Face model caches.
 - Environment variables are loaded from `src/.env` via `env_file`.
 - LangGraph checkpoints are persisted in the dedicated `langgraph-postgres` service.
