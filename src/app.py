@@ -5,10 +5,7 @@ from pathlib import Path
 import streamlit as st
 
 from core.app_config import load_app_config
-from ui.app_sidebar import (
-    setup_chat_selector,
-    setup_vector_search_ui,
-)
+from ui.app_sidebar import setup_chat_selector
 from ui.app_chat import render_chat_input, render_history
 from ui.app_state import (
     get_chat_db,
@@ -106,11 +103,11 @@ def main() -> None:
             st.session_state.pending_delete_chat_id = ""
             st.rerun()
 
-    setup_vector_search_ui(
-        vector_collection=CONFIG.vector_collection,
-        vector_model_name=CONFIG.vector_model_name,
-        vector_device=CONFIG.vector_device,
-        vector_qdrant_url=CONFIG.vector_qdrant_url,
+    st.sidebar.divider()
+    st.sidebar.caption("Evidence retrieval: Tavily web search")
+    st.sidebar.caption(
+        "AI-generated content may contain mistakes. Please verify important "
+        "details with the original sources."
     )
     load_active_chat(
         chat_db=chat_db,

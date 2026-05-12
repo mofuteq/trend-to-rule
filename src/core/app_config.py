@@ -38,15 +38,11 @@ class AppConfig:
     chat_db_name: str
     user_db_name: str
     chat_meta_db_name: str
-    vector_collection: str
-    vector_model_name: str
-    vector_device: str
-    vector_candidate_k: int
-    vector_qdrant_url: str
-    vector_per_query_top_k: int
-    vector_mmr_diversity: float
     app_log_level: str
     tavily_api_key: str
+    tavily_text_max_results: int
+    tavily_search_depth: str
+    tavily_include_raw_content: bool
     tavily_image_fetch_limit: int
     tavily_image_limit: int
     tavily_include_image_descriptions: bool
@@ -67,19 +63,15 @@ def load_app_config() -> AppConfig:
         chat_db_name="chat_db",
         user_db_name="user_db",
         chat_meta_db_name="chat_meta_db",
-        vector_collection=os.getenv(
-            "VECTOR_COLLECTION", "article_markdown_bge_m3"
-        ),
-        vector_model_name=os.getenv("VECTOR_MODEL_NAME", "BAAI/bge-m3"),
-        vector_device=os.getenv("VECTOR_DEVICE", "auto"),
-        vector_candidate_k=int(os.getenv("VECTOR_CANDIDATE_K", "50")),
-        vector_qdrant_url=os.getenv(
-            "VECTOR_QDRANT_URL", "http://localhost:6333"
-        ),
-        vector_per_query_top_k=int(os.getenv("VECTOR_PER_QUERY_TOP_K", "5")),
-        vector_mmr_diversity=float(os.getenv("VECTOR_MMR_DIVERSITY", "0.3")),
         app_log_level=os.getenv("APP_LOG_LEVEL", "INFO").upper(),
         tavily_api_key=os.getenv("TAVILY_API_KEY", ""),
+        tavily_text_max_results=int(os.getenv("TAVILY_TEXT_MAX_RESULTS", "5")),
+        tavily_search_depth=_parse_tavily_search_depth(
+            os.getenv("TAVILY_SEARCH_DEPTH", "basic")
+        ),
+        tavily_include_raw_content=_parse_bool(
+            os.getenv("TAVILY_INCLUDE_RAW_CONTENT", "false")
+        ),
         tavily_image_fetch_limit=int(os.getenv("TAVILY_IMAGE_FETCH_LIMIT", "10")),
         tavily_image_limit=int(os.getenv("TAVILY_IMAGE_LIMIT", "3")),
         tavily_include_image_descriptions=_parse_bool(
@@ -93,3 +85,11 @@ def load_app_config() -> AppConfig:
 def _parse_bool(value: str) -> bool:
     """Parse common environment boolean strings."""
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _parse_tavily_search_depth(value: str) -> str:
+    """Parse Tavily search depth with a conservative default."""
+    normalized = value.strip().lower()
+    if normalized in {"basic", "advanced"}:
+        return normalized
+    return "basic"

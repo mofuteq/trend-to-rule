@@ -6,197 +6,128 @@
 ![Pydantic AI](https://img.shields.io/badge/LLM-Pydantic%20AI-purple)
 ![OpenRouter](https://img.shields.io/badge/provider-OpenRouter-black)
 ![Langfuse](https://img.shields.io/badge/tracing-Langfuse-orange)
-![Qdrant](https://img.shields.io/badge/vector%20DB-Qdrant-red)
+![Tavily](https://img.shields.io/badge/search-Tavily-teal)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
-Observable reasoning system for distilling noisy fashion trend narratives into reusable style rules and grounded visual references.
+`trend-to-rule` is a search-native Agentic RAR runtime for turning noisy fashion
+and styling trend narratives into inspectable rules.
 
----
+It separates canonical patterns from emerging signals, extracts structured
+claims from normalized web evidence, synthesizes a rule, and optionally attaches
+visual references. The final answer is backed by explicit intermediate
+artifacts rather than hidden model grounding.
 
-## Overview
+## Current Retrieval Backend
 
-trend-to-rule is an observable reasoning system for turning noisy multi-source fashion narratives into reusable style rules.
+Tavily is the default and only text evidence backend in this repository.
 
-Instead of acting as a summarizer or a hidden recommendation engine, the system separates canonical patterns from emerging signals, extracts structured claims, and synthesizes higher-level rules that help users reason about how style norms evolve.
+The app runs two text searches per in-scope request:
 
-The goal is not to automate taste or replace human judgment.
-The goal is to provide inspectable structure: stable patterns, emerging shifts, explicit trade-offs, and concrete examples that make the distilled rule easier to apply.
+- `canonical_query`
+- `emerging_query`
 
-The system ingests multi-source articles, performs structured retrieval, separates stable (canonical) patterns from emerging signals, and produces reusable rule-like outputs backed by explicit intermediate artifacts.
+Those queries come from `RequestAnalysis.candidate_queries`. Raw Tavily payloads
+are never passed directly to the LLM. Search results are normalized into stable
+`WebSource` models first:
 
-LLMs are not treated as autonomous agents here.
-They are used as controlled transformation components inside a human-designed pipeline.
-The final judgment remains with the user.
-
-This is not just a retrieval tool.
-This is not just a summarizer.
-
-The system operates as a staged pipeline:
+```python
+class WebSource(BaseModel):
+    source_id: str
+    query_kind: Literal["canonical", "emerging"]
+    title: str
+    url: str
+    snippet: str
+    published_at: str | None = None
+    score: float | None = None
+    provider: Literal["tavily"] = "tavily"
 ```
-collect → extract → embed → retrieval → claim extraction → structural synthesis → rule generation → visual example retrieval
+
+Sources are deduplicated by normalized URL, then rendered into
+`canonical_context` and `emerging_context` for the existing RAR stages:
+
+```text
+retrieve_supporting_context
+  -> extract_claims
+  -> extract_structured_draft
+  -> generate_decision_support
+  -> generate_query
+  -> render_image_query
+  -> search_images
 ```
 
-The goal is structural distillation: transforming noisy trend narratives into reusable reasoning artifacts that users can inspect, question, and apply.
+If `TAVILY_API_KEY` is missing, or if no text evidence can be retrieved, the
+workflow abstains instead of producing a confident evidence-based answer.
 
-### Visual Example Retrieval
+## Visual References
 
-The system can optionally attach visual references after rule generation.
+Visual retrieval also uses Tavily, but it is downstream of rule generation.
 
-This step exists to make distilled rules more concrete without turning the project into a recommendation engine.
-Visual examples are treated as explicit example instantiations of a rule, not as hidden recommendations produced by the model.
+The workflow does not send the final answer directly to image search. It first
+converts the rule into an `ExampleQuerySpec`, renders a compact image query, and
+then requests Tavily image candidates.
 
-The pipeline does not send the final answer text directly to image search.
-Instead, it first converts the rule into a compact `ExampleQuerySpec`, then renders a search query optimized for image retrieval.
+Image candidates are reranked locally with a lightweight multilingual CLIP pair:
 
-This is intentional.
+- `sentence-transformers/clip-ViT-B-32-multilingual-v1` for text queries
+- `sentence-transformers/clip-ViT-B-32` for image candidates
 
-Explanation terms are not always retrieval terms.
-Abstract phrases such as `minimalism`, `sophisticated`, or `quality` may sound appropriate in a written explanation, but they often perform poorly as image-search queries.
-For visual retrieval, the system prioritizes concrete wardrobe and context terms such as item, material, silhouette, and usage context.
-
-Image candidates are reranked with a lightweight multilingual CLIP pair:
-`sentence-transformers/clip-ViT-B-32-multilingual-v1` embeds the rendered
-text query, while `sentence-transformers/clip-ViT-B-32` embeds image
-candidates in the same CLIP space. This keeps multilingual and other non-English
-queries usable without replacing the fast image encoder used for visual
-similarity.
-
-Example:
-
-`rule -> ExampleQuerySpec -> rendered query -> Tavily visual search -> multilingual CLIP rerank -> visual reference cards`
-
-This keeps the search step:
-
-- explicit
-- replaceable
-- observable
-
-The core idea is that retrieval itself becomes a reasoning primitive.
-
-The goal is to model how humans derive rules from observed trends.
-
-Visual examples are subordinate to reasoning: they exist to concretize a rule, not to replace the rule with opaque recommendation behavior.
-
-Sample output:
-
-- [examples/sample-output.md](./examples/sample-output.md)
-
----
+CLIP remains local only for visual reranking. It is not used for text evidence
+retrieval.
 
 ## Architecture
 
-The following diagram shows the end-to-end pipeline from RSS ingestion to rule synthesis, followed by optional visual example retrieval.
-
-The pipeline consists of the following stages:
-
-1. RSS collection
-2. Article extraction
-3. Embedding generation
-4. Hybrid retrieval (dense + sparse)
-5. Canonical vs Emerging separation
-6. Claim extraction
-7. Structural synthesis
-8. Rule generation
-9. Visual example retrieval
-
-Each stage produces explicit intermediate artifacts so the reasoning process remains reproducible and inspectable.
-
 ```mermaid
 flowchart TD
-    A[collect_rss.py] -->|LMDB: rss_db| B[extract_articles.py]
-    A -->|Debug JSONL: raw_feed_items.jsonl| J1[Debug Files]
-
-    B -->|LMDB: article_db| C[embed_articles.py]
-    B -->|Debug JSONL: extracted_articles.jsonl| J1
-
-    C -->|Dense + Sparse vectors| D[(Qdrant collection)]
-    C -->|Payload metadata\npublished_at/ingested_at\npublished_ts/ingested_ts| D
-
     E[Streamlit app.py] --> W[chat_workflow LangGraph]
-    W --> F[analyze_request]
-    F --> R{route_by_scope}
-    R -->|in scope| G[canonical_query / emerging_query]
-    R -->|out of scope| X[fixed abstention]
-
-    G --> H[app_retrieval.py]
-    H -->|Hybrid search + time filter| D
-    H -->|Per-query MMR| D
-    H --> I[Canonical/Emerging contexts]
-
-    I --> J[extract_claims]
-    J -->|canonical_claims / emerging_claims| K[extract_structured_draft]
-    K --> DS[generate_decision_support]
-    DS --> M[generate_example_query_spec]
-    M --> N[render_example_query]
-    N --> O[search_visual_examples]
-    O --> P[CLIP rerank image candidates]
-    P --> E
-    E --> L[UI response + retrieval table + visual references]
-
-    subgraph LLM Layer
-      F
-      K
-      DS
-      M
-    end
-
-    subgraph Visual Grounding
-      N
-      O
-      P
-    end
-
-    subgraph Storage
-      B1[(LMDB: rss_db)]
-      B2[(LMDB: article_db)]
-      D
-    end
-```
-
-## State Machine Architecture
-
-The chat workflow is implemented as a LangGraph state machine in `src/services/chat_workflow.py`. The graph starts with request analysis and scope routing, then either returns the fixed abstention response or enters the existing Fixed RAR (Retrieval-Augmented Reasoning) path: `retrieve_supporting_context → extract_claims → extract_structured_draft → generate_decision_support → generate_query → render_image_query → search_images`. The project deliberately keeps the in-scope RAR path deterministic while making the request-analysis and scope decision visible as first-class state transitions.
-
-Each node consumes and extends a single typed shared state (`AssistantResponseState`, a Pydantic `BaseModel`). Nodes return partial dict updates with only the fields they produce — request analysis, retrieval, claims, structured draft, rule, query spec, image query, image results — and downstream nodes read those fields by attribute. Modeling the exchange surface as a Pydantic schema keeps node boundaries explicit and makes each transition auditable.
-
-```mermaid
-flowchart LR
-    S([START]) --> AR[analyze_request]
-    AR --> R[route_by_scope]
+    W --> A[analyze_request]
+    A --> R{route_by_scope}
     R -->|out of scope| OOS[out_of_scope_response]
-    OOS --> E([END])
-    R -->|in scope| RSC[retrieve_supporting_context]
-    RSC --> EC[extract_claims]
+    R -->|in scope| Q[canonical_query / emerging_query]
+    Q --> T[Tavily text search]
+    T --> S[normalize to WebSource]
+    S --> D[dedupe by normalized URL]
+    D --> C[canonical_context / emerging_context]
+    C --> EC[extract_claims]
     EC --> ESD[extract_structured_draft]
     ESD --> GDS[generate_decision_support]
     GDS --> GQ[generate_query]
     GQ --> RIQ[render_image_query]
-    RIQ --> SI[search_images]
-    SI --> E
+    RIQ --> SI[Tavily image search]
+    SI --> CLIP[local CLIP rerank]
+    CLIP --> E
+
+    subgraph Observability
+      LF[Langfuse Cloud tracing]
+    end
+    W --> LF
 ```
 
-Checkpoints are persisted to a dedicated Postgres instance (`langgraph-postgres` in `docker-compose.yml`, kept separate from the Langfuse stack) via `PostgresSaver` from `langgraph-checkpoint-postgres`. The checkpointer is attached at compile time when `LANGGRAPH_POSTGRES_URL` is set; otherwise the graph compiles without persistence so local runs without the container still work.
+The LangGraph workflow is implemented in
+[`src/services/chat_workflow.py`](./src/services/chat_workflow.py). It keeps
+request analysis, scope routing, the out-of-scope path, the structured RAR
+stages, visual retrieval, Langfuse tracing, and the Postgres checkpoint backend.
 
-`thread_id` is currently scoped to `chat_id:chat_turn`, intentionally — i.e. one LangGraph thread per chat turn rather than per chat. This keeps each turn starting from a clean initial state (matching the pre-checkpointer behavior) while still persisting every node transition so a specific turn can be inspected later by its `chat_id:chat_turn` key. It also keeps the door open to longer-lived threads in future work without changing today's contract.
+In-scope runs log text evidence metadata to Langfuse:
 
-Future work — tracked under "Stateful Agentic RAR" — includes: sufficiency checks (e.g. claim/draft adequacy gates), retrieval loops that re-query when context is insufficient, and longer-lived stateful workflows that resume across turns. These are intentionally out of scope for the current graph; the current topology exists as a reproducible, inspectable substrate to evolve incrementally rather than a finished agentic system.
+- `text_retrieval_backend="tavily"`
+- `canonical_source_count`
+- `emerging_source_count`
+- `total_source_count`
+
+Out-of-scope requests do not run `retrieve_supporting_context` and do not call
+Tavily text search.
 
 ## Directory Layout
 
-The codebase is organized to mirror the pipeline described above.
-
 ```text
 trend-to-rule/
-├── .data/
 ├── docker-compose.yml
 ├── src/
 │   ├── app.py
 │   ├── Dockerfile
-│   ├── .env
 │   ├── core/
 │   ├── pipeline/
 │   ├── prompt_template/
-│   ├── retrieval/
 │   ├── services/
 │   ├── storage/
 │   └── ui/
@@ -205,42 +136,19 @@ trend-to-rule/
 └── README.md
 ```
 
-- `.data/`: Local runtime artifacts such as LMDB files, JSONL debug outputs, chat state, Qdrant storage, logs, and shared Hugging Face model caches.
-- `docker-compose.yml`: Local multi-service runtime for the app, Qdrant, and LangGraph checkpoint Postgres.
-- `src/.env`: Local environment variables for app and pipeline runs.
-- `src/Dockerfile`: Container image definition for the Streamlit app.
-- `src/core/`: Shared configuration, domain models, and reusable query/text/template helpers.
-- `src/pipeline/`: Offline ingestion pipeline stages from RSS collection to extraction and embedding.
-- `src/prompt_template/`: Prompt templates used by analysis, claim extraction, synthesis, and image-query generation.
-- `src/retrieval/`: Hybrid vector retrieval, MMR reranking, app-facing retrieval formatting, and explicit visual search adapters.
-- `src/services/`: LLM client layer, prompt loading, chat-domain functions, workflow orchestration, and image search.
-- `src/storage/`: LMDB-backed persistence helpers.
-- `src/ui/`: Streamlit UI rendering, session state, and sidebar wiring.
-- `src/app.py`: Streamlit application entrypoint.
-- `uv.lock`: Locked dependency graph for reproducible `uv` environments.
+- `src/core/`: runtime config, domain models, text/query helpers.
+- `src/services/web_search.py`: Tavily text evidence search and `WebSource`
+  normalization.
+- `src/services/image_search.py`: Tavily image search and local CLIP reranking.
+- `src/services/chat_workflow.py`: LangGraph workflow orchestration.
+- `src/services/chat.py`: LLM-backed request analysis, claim extraction,
+  structured draft, decision support, and query generation.
+- `src/prompt_template/`: prompts for each structured stage.
+- `src/storage/`: LMDB-backed chat persistence.
+- `src/ui/`: Streamlit rendering and session state.
+- `docker-compose.yml`: local app plus LangGraph checkpoint Postgres.
 
----
-## Motivation
-
-Large Language Models generate plausible summaries, but they often:
-
-- Blur time-series evolution
-- Average conflicting viewpoints
-- Fail to distinguish stable structure from transient hype
-- Lack explicit epistemic boundary control
-
-`trend-to-rule` addresses these limitations by enforcing:
-
-- Explicit canonical vs emerging separation
-- Cross-source structural synthesis
-- Deterministic output schema
-- Reproducible intermediate stages
-
-For users, this means less time spent reading fragmented trend articles and more time spent reasoning with explicit structure: what is stable, what is changing, and what concrete examples instantiate the rule.
-
----
-
-## Environment Setup (uv)
+## Environment Setup
 
 Install dependencies with:
 
@@ -248,28 +156,21 @@ Install dependencies with:
 uv sync
 ```
 
-## `.env` Configuration
-
 Create `src/.env` for local runs and Docker Compose `env_file`.
-
-Typical example:
 
 ```dotenv
 OPENROUTER_API_KEY=your-openrouter-api-key
 OPENROUTER_MODEL=google/gemini-3-flash-preview
 OPENROUTER_REASONING_EFFORT=low
 
-VECTOR_QDRANT_URL=http://localhost:6333
-VECTOR_COLLECTION=article_markdown_bge_m3
-VECTOR_MODEL_NAME=BAAI/bge-m3
-VECTOR_DEVICE=auto
-VECTOR_CANDIDATE_K=50
-VECTOR_PER_QUERY_TOP_K=5
-VECTOR_MMR_DIVERSITY=0.3
 TAVILY_API_KEY=
+TAVILY_TEXT_MAX_RESULTS=5
+TAVILY_SEARCH_DEPTH=basic
+TAVILY_INCLUDE_RAW_CONTENT=false
 TAVILY_IMAGE_FETCH_LIMIT=10
 TAVILY_IMAGE_LIMIT=3
 TAVILY_INCLUDE_IMAGE_DESCRIPTIONS=true
+
 CLIP_TEXT_MODEL_NAME=sentence-transformers/clip-ViT-B-32-multilingual-v1
 CLIP_IMAGE_MODEL_NAME=sentence-transformers/clip-ViT-B-32
 
@@ -287,48 +188,45 @@ LANGFUSE_BASE_URL="https://cloud.langfuse.com"
 LANGFUSE_PUBLIC_KEY=
 LANGFUSE_SECRET_KEY=
 
-# Optional: enable LangGraph checkpoint persistence for local non-Docker runs.
 LANGGRAPH_POSTGRES_URL=postgresql://postgres:postgres@localhost:5433/langgraph
 ```
 
-Notes:
+Key settings:
 
-- `OPENROUTER_API_KEY`: Required for the Pydantic AI OpenRouter provider.
-- `OPENROUTER_MODEL`: Default OpenRouter model name. Defaults to `google/gemini-3-flash-preview`.
-- `OPENROUTER_REASONING_EFFORT`: Reasoning level forwarded to OpenRouter model settings. Supported values are `minimal`, `low`, `medium`, and `high`.
-- `VECTOR_QDRANT_URL`: Qdrant endpoint URL (default: `http://localhost:6333`).
-- `TAVILY_API_KEY`: Set this to enable Tavily visual reference cards. Leave it empty to skip Tavily visual retrieval while keeping text answers working.
-- `TAVILY_IMAGE_FETCH_LIMIT`: Number of raw Tavily image candidates normalized before CLIP reranking.
-- `TAVILY_IMAGE_LIMIT`: Number of final image cards shown after CLIP reranking.
-- `TAVILY_INCLUDE_IMAGE_DESCRIPTIONS`: Whether Tavily should return image descriptions when available.
-- `CLIP_TEXT_MODEL_NAME`: Hugging Face model ID, not a filesystem path. This Sentence Transformers model embeds rendered image-search text queries. The default multilingual CLIP text encoder supports non-English queries.
-- `CLIP_IMAGE_MODEL_NAME`: Hugging Face model ID, not a filesystem path. This Sentence Transformers model embeds image candidates in the same CLIP space as the text model.
-- `HF_HOME` / `HF_HUB_CACHE` / `TRANSFORMERS_CACHE` / `SENTENCE_TRANSFORMERS_HOME`: Shared Hugging Face cache paths. Keep `TRANSFORMERS_CACHE` and `SENTENCE_TRANSFORMERS_HOME` aligned with `HF_HUB_CACHE` so BGE-M3 and Sentence Transformers CLIP models are stored under the same hub cache root, for example `.data/huggingface/hub/models--sentence-transformers--clip-ViT-B-32`.
-- `CHAT_DB_PATH`: LMDB path for chat history and session metadata.
-- `T2R_DEFAULT_WORKSPACE`: Default sidebar workspace key for chat history. Use the same workspace key later to reopen that workspace's saved chats.
-- `APP_LOG_LEVEL`: Application log level such as `INFO` or `DEBUG`.
-- `APP_ENV`: Environment-like label added to Langfuse metadata, for example `development`, `demo`, or `local`.
-- `LANGFUSE_BASE_URL`: Langfuse endpoint. RepoA defaults to Langfuse Cloud at `https://cloud.langfuse.com`.
-- `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`: Required only when tracing is enabled. Leave either key empty to disable Langfuse network calls.
-- `LANGGRAPH_POSTGRES_URL`: Optional. Enables LangGraph checkpoint persistence for local non-Docker runs. Docker Compose injects this automatically for the app service.
+- `OPENROUTER_API_KEY`: required for Pydantic AI via OpenRouter.
+- `TAVILY_API_KEY`: required for in-scope text evidence retrieval and also used
+  by visual retrieval.
+- `TAVILY_TEXT_MAX_RESULTS`: per-lane text result cap. Default: `5`.
+- `TAVILY_SEARCH_DEPTH`: Tavily search depth. Default: `basic`.
+- `TAVILY_INCLUDE_RAW_CONTENT`: whether Tavily may return raw page content.
+  Default: `false`.
+- `TAVILY_IMAGE_FETCH_LIMIT`: raw image candidate count before CLIP reranking.
+- `TAVILY_IMAGE_LIMIT`: final visual reference card count after CLIP reranking.
+- `TAVILY_INCLUDE_IMAGE_DESCRIPTIONS`: whether Tavily should return image
+  descriptions when available.
+- `LANGFUSE_BASE_URL`: defaults to Langfuse Cloud.
+- `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`: tracing is disabled if either
+  key is empty.
+- `LANGGRAPH_POSTGRES_URL`: enables Postgres-backed LangGraph checkpoints.
 
-`LANGGRAPH_POSTGRES_PASSWORD` is optional for Docker Compose and defaults to `postgres`. `LANGGRAPH_POSTGRES_POOL_MAX` is optional and defaults to `10`.
+`LANGGRAPH_POSTGRES_PASSWORD` is optional for Docker Compose and defaults to
+`postgres`. `LANGGRAPH_POSTGRES_POOL_MAX` is optional and defaults to `10`.
 
 ## Run With Docker Compose
 
-Start the Streamlit app, Qdrant, and the LangGraph checkpoint Postgres together with the bundled Compose file:
+Start the Streamlit app and LangGraph checkpoint Postgres:
 
 ```bash
 docker compose up -d
 ```
 
-Services will be available at:
+Services:
 
 - Streamlit app: `http://localhost:8501`
-- Qdrant: `http://localhost:6333`
-- LangGraph checkpoint Postgres: `localhost:5433` -> container `langgraph-postgres:5432`
+- LangGraph checkpoint Postgres: `localhost:5433` -> container
+  `langgraph-postgres:5432`
 
-To stop it:
+Stop services:
 
 ```bash
 docker compose down
@@ -336,189 +234,13 @@ docker compose down
 
 Compose details:
 
-- The app image is built from [`src/Dockerfile`](./src/Dockerfile) using `debian:stable-slim`.
-- The app is started with `uv run streamlit run src/app.py`.
-- The app connects to Qdrant over the Compose network using `http://qdrant:6333`.
-- Set `TAVILY_API_KEY` to enable Tavily visual reference cards. Leave it empty to skip Tavily visual retrieval while keeping text answers working.
-- Local runtime data is mounted from `.data/` into the container at `/app/.data`, including Qdrant storage, logs, and shared Hugging Face model caches.
-- Environment variables are loaded from `src/.env` via `env_file`.
-- LangGraph checkpoints are persisted in the dedicated `langgraph-postgres` service.
-- Checkpoint data is stored under `.data/langgraph/postgres`.
+- The app image is built from [`src/Dockerfile`](./src/Dockerfile).
+- Environment variables are loaded from `src/.env`.
+- Runtime data is mounted from `.data/` into the container at `/app/.data`.
+- LangGraph checkpoints are stored under `.data/langgraph/postgres`.
 - The app waits for `langgraph-postgres` to become healthy before starting.
-- This Postgres is separate from observability infrastructure.
 
-All persistent state lives on the host under `.data/` (git-ignored). Qdrant uses `.data/qdrant/`; LangGraph checkpoint Postgres uses `.data/langgraph/postgres/`.
-
-For Langfuse tracing, use Langfuse Cloud credentials in `src/.env`. See [docs/langfuse.md](./docs/langfuse.md) for the current observability setup.
-
----
-
-## Hugging Face Cache Recovery
-
-The app stores downloaded embedding and CLIP models under `.data/huggingface`
-so local runs and Docker share the same model files. If a download is
-interrupted, vector search can fail with errors such as:
-
-- `No such file or directory: ... .incomplete`
-- `Unable to load weights from pytorch checkpoint file ... pytorch_model.bin`
-
-This matters because large local models such as `BAAI/bge-m3` and the CLIP
-encoders are part of the local product runtime, not disposable test fixtures.
-Keeping the cache under `.data/` prevents repeated downloads across local and
-container runs and keeps model state visible alongside the rest of the
-local runtime stack.
-
-Vector search now attempts one automatic recovery: it removes interrupted
-downloads or the affected model cache directory, then retries the model load so
-Hugging Face can download a clean copy.
-
-If the app is already running and keeps using an old in-process model state,
-restart the app container:
-
-```bash
-docker compose restart app
-```
-
-For manual cleanup, remove only the affected model cache directory:
-
-```bash
-rm -rf .data/huggingface/hub/models--BAAI--bge-m3
-docker compose restart app
-```
-
-The next vector search will redownload `BAAI/bge-m3`, so the first request can
-take longer than usual.
-
----
-
-## collect_rss.py Usage
-
-`collect_rss.py` fetches Google News RSS items for predefined queries and stores normalized records into LMDB + debug JSONL.
-
-### Run
-
-```bash
-uv run src/pipeline/collect_rss.py
-```
-
-### Resume after interruption
-
-If the process stops due to transient network errors (for example `ConnectionResetError`), resume from the last completed task:
-
-```bash
-uv run src/pipeline/collect_rss.py --resume
-```
-
-To restart from scratch and clear checkpoint:
-
-```bash
-uv run src/pipeline/collect_rss.py --reset-checkpoint
-```
-
-### Output
-
-- LMDB: `.data/rss_db`
-- Debug JSONL: `.data/raw_feed_items.jsonl`
-- Checkpoint: `.data/collect_rss_checkpoint.json`
-- Log: `.data/logs/collect_rss.log`
-
-### Notes
-
-- Current query list and per-query fetch size (`n=50`) are defined in code (`main()`).
-- Records are deduplicated by `dedupe_key` when writing to LMDB.
-- Checkpoint is updated after each successful task; `--resume` skips tasks up to the saved index.
-- You can override checkpoint path with `--checkpoint-path`.
-- Logs are rotated daily and kept for 5 days. You can override the log path with `--log-path`.
-
----
-
-## extract_articles.py Usage
-
-`extract_articles.py` reads RSS records from LMDB, resolves article pages, converts article body to Markdown, and writes results to LMDB + debug JSONL.
-
-### Run
-
-```bash
-uv run src/pipeline/extract_articles.py
-```
-
-### Typical example
-
-```bash
-uv run src/pipeline/extract_articles.py \
-  --input-lmdb .data/rss_db \
-  --output-lmdb .data/article_db \
-  --debug-jsonl .data/extracted_articles.jsonl \
-  --interval 1.5
-```
-
-### Main options
-
-- `--input-lmdb`: Input RSS LMDB path (default: `.data/rss_db`)
-- `--output-lmdb`: Output extracted LMDB path (default: `.data/article_db`)
-- `--debug-jsonl`: Debug JSONL append path (default: `.data/extracted_articles.jsonl`)
-- `--limit`: Max records to process (`0` means all)
-- `--interval`: Sleep seconds per record request
-- `--no-readability`: Disable readability-based extraction
-- `--only-new`: Skip records whose `dedupe_key` already exists in output LMDB
-- `--log-path`: Log file path (default: `.data/logs/extract_articles.log`)
-
-### Notes
-
-- Output Markdown includes frontmatter metadata (e.g. `source_url`, `resolved_url`, `published_at`, `locale`, `country`, `word_count`, `section_count`).
-- LMDB and JSONL are written per record.
-- Logs are written to `.data/logs/extract_articles.log`, rotated daily, and kept for 5 days.
-
----
-
-## embed_articles.py Usage
-
-`embed_articles.py` reads extracted article markdown from LMDB, creates dense+sparse embeddings with `bge-m3`, and upserts chunk vectors into Qdrant.
-
-### Run
-
-```bash
-uv run src/pipeline/embed_articles.py
-```
-
-### Example: Docker Compose Qdrant
-
-```bash
-uv run src/pipeline/embed_articles.py \
-  --input-lmdb .data/article_db \
-  --collection article_markdown_bge_m3 \
-  --qdrant-url http://localhost:6333 \
-  --batch-size 32 \
-  --device auto \
-  --interval 0.5 \
-  --recreate
-```
-
-### Main options
-
-- `--input-lmdb`: Input extracted LMDB path (default: `.data/article_db`)
-- `--qdrant-url`: Qdrant endpoint URL (default: `http://localhost:6333`)
-- `--qdrant-api-key`: Qdrant API key
-- `--collection`: Target Qdrant collection name
-- `--model-name`: Embedding model name (default: `BAAI/bge-m3`)
-- `--batch-size`: Embedding batch size
-- `--limit`: Max records to process (`0` means all)
-- `--interval`: Sleep seconds between each record processing
-- `--recreate`: Drop and recreate collection before ingest
-- `--only-new`: Embed only chunks not already present in Qdrant
-- `--update-payload-only`: Update payload only (no re-embedding, no vector overwrite)
-- `--log-path`: Log file path (default: `.data/logs/embed_articles.log`)
-
-
-### Notes
-
-- Requires Qdrant running via Docker Compose. Use `--qdrant-url http://localhost:6333` (default).
-- Payload includes metadata such as `published_ts` and `ingested_ts` (Unix time).
-- Logs are written to `.data/logs/embed_articles.log`, rotated daily, and kept for 5 days.
-
----
-
-## app.py Usage
+## Run Locally
 
 Launch the Streamlit app with:
 
@@ -526,210 +248,34 @@ Launch the Streamlit app with:
 uv run streamlit run src/app.py
 ```
 
----
+## Offline Collection Utilities
 
-## Retrieval Design Matters: A Comparison
+The repository still includes lightweight RSS/article collection utilities for
+creating local corpora or debugging source quality:
 
-This section demonstrates how retrieval strategy fundamentally changes output quality.
+- `src/pipeline/collect_rss.py`
+- `src/pipeline/extract_articles.py`
 
-We compare two approaches:
+These utilities are not required for the default search-native runtime.
 
-1. **Baseline Retrieval** – Direct vector search using the raw user prompt.
-2. **Structured Retrieval** – Separate hybrid searches for canonical and emerging patterns.
+## Observability
 
-### 1) Baseline: User Prompt -> Vector Search -> Synthesis
+RepoA uses Langfuse Cloud as the default observability backend for development
+and OSS demos. Set `LANGFUSE_BASE_URL="https://cloud.langfuse.com"` with a
+Langfuse Cloud public/secret key pair in `src/.env`; tracing activates
+automatically when both keys are present.
 
-**User Prompt**
-> "Tell me about fashion trends in Silicon Valley."
+Each Streamlit chat turn is captured as a single `chat_turn` trace with native
+LangGraph callback events. In-scope requests show `analyze_request`,
+`route_by_scope`, `retrieve_supporting_context`, and the RAR nodes.
+Out-of-scope requests show `analyze_request`, `route_by_scope`, and
+`out_of_scope_response`.
 
-#### Retrieval Strategy
+LLM calls in `src/services/llm_client.py` are recorded as generation spans with
+model name, input messages, output, token usage, and sampling config.
 
-- Single vector query using the raw user prompt.
-- Hybrid search (dense + sparse) + MMR
-- Top-N results passed directly to synthesis.
-
-#### Observed Output Characteristics
-
-- Blends historical norms and recent shifts together.
-- Tends toward summarization rather than structural separation.
-- Canonical and emerging patterns are often mixed.
-- Conflicts are averaged out instead of exposed.
-- Output resembles a blog-style overview.
-
-#### Example Pattern
-
-- "Minimalist tech uniforms"
-- "Vintage denim replacing chinos"
-- "Quiet luxury trend"
-
-These elements are described together without clear temporal or structural distinction.
-
-#### Limitation
-
-The model performs a semantic average over retrieved content.  
-No explicit separation of time, dominance, or structural shift occurs.
-
-**Result:** Readable, but structurally weak.
-
-### 2) Structured Retrieval: Canonical vs Emerging Separation
-
-Instead of retrieving with the raw user prompt:
-
-1. Generate two structurally distinct queries:
-   - `canonical_query`
-   - `emerging_query`
-2. Perform hybrid search independently for each.
-   - `emerging`: `published_ts >= now - 180d`
-   - `canonical`: `published_ts < now - 180d`
-3. Apply MMR within each result set.
-4. Keep canonical and emerging result sets independent for synthesis context.
-
-#### Canonical Query (Example)
-`tech industry dress code evolution Bay Area professional norms`
-
-#### Emerging Query (Example)
-`Bay Area workplace style shift 2024 adoption signaling changes`
-
-#### Observed Output Characteristics
-
-- Canonical contains **pre-shift baseline patterns**:
-  - Minimalist tech uniform
-  - Normcore aesthetic
-  - Traditional office wear (chinos, dress trousers)
-- Emerging contains **post-shift change signals**:
-  - Vintage denim normalization
-  - Quiet luxury among tech elites
-  - Generational silhouette shifts
-- Conflicts are explicit:
-  - Minimalist anti-fashion vs quiet luxury sophistication
-  - Chinos -> vintage denim replacement
-- Gaps are surfaced rather than ignored.
-
-**Result:** Structured, temporally separated, and analytically useful.
-
-### Key Insight
-
-The model did not change.  
-The improvement comes from encoding structural intent into retrieval rather than relying on the model to infer it.
-
-The same principle also applies to visual-example retrieval: the system does not pass an abstract style explanation directly into image search, but instead translates rules into a compact query specification and renders search terms that favor concrete wearable/contextual signals over broad moodboard language.
-
-Output structure is primarily influenced by retrieval design rather than model capability.
-
-### Architectural Implication
-
-Standard RAG: `retrieve -> generate`  
-`trend-to-rule`: `separate -> retrieve -> filter(time) -> diversify(MMR) -> structure -> synthesize`
-
-Retrieval becomes an active reasoning component rather than a passive context provider.
-
-### Why This Matters
-
-This approach enables:
-
-- Structural abstraction of trends
-- Explicit time-evolution modeling
-- Conflict detection instead of averaging
-- Reusable rule extraction
-
-It moves beyond traditional RAG into structured reasoning augmentation.
-
----
-
-## Explicit Search Over Hidden Grounding
-
-The project prefers explicit, replaceable search components over model-internal grounding.
-That applies not only to article retrieval but also to visual-example retrieval.
-Visual references are attached after the final structured answer so that examples remain subordinate to reasoning rather than replacing it.
-
-External search is treated as infrastructure:
-
-- queries are generated explicitly
-- search backends are replaceable
-- image candidates are reranked explicitly with CLIP similarity
-- retrieved examples remain observable to the user
-
-This makes it easier to inspect failures, tune query rendering, and avoid vendor-locked hidden retrieval behavior.
-
-## Future Work
-
-Planned improvements include:
-
-- Better claim-level extraction precision and robustness
-- Improved retrieval ranking for canonical vs emerging separation
-- Better visual grounding evaluation and query rendering for example retrieval
-- Observability-driven iteration using Langfuse traces and structured intermediate artifacts
-- A separate generalized evaluation repository for benchmarking structural reasoning against simpler retrieval baselines
-- Sufficiency-gated conditional edges
-- Query refinement / re-retrieval loops
-- Abstention / recommendation suppression when evidence is insufficient
-- Multi-turn state evaluation using checkpointed graph state
-
-The current state is a deterministic Fixed RAR pipeline with checkpointed state transitions. Sufficiency checks and retrieval loops are deliberately scoped as future work rather than claims about today's behavior.
-
-These additions aim to strengthen both the product value of the system and the clarity of its reasoning process.
-
----
-
-## Model Handling
-
-`create()` in `src/services/llm_client.py` routes all LLM calls through [Pydantic AI](https://ai.pydantic.dev/) using its OpenRouter provider.
-
-The architecture is intentionally model-name configurable through `OPENROUTER_MODEL`, while keeping the connection target fixed to OpenRouter.
-
-### Backend
-
-All calls use `OpenRouterModel` + `OpenRouterProvider`. The default model is `google/gemini-3-flash-preview`.
-
-### Model Roles
-
-- Attribute / vertical inference uses `google/gemini-2.5-flash-lite` with `minimal` reasoning.
-- Main RAR stages use `OPENROUTER_MODEL`, defaulting to `google/gemini-3-flash-preview`.
-
-### Structured vs Unstructured Output
-
-- When `response_model` is supplied, Pydantic AI's `output_type` enforces the schema and returns a typed Pydantic model instance directly.
-- When `response_model` is omitted, `create()` returns a `SimpleNamespace` with a `.text` attribute containing the plain-text response string.
-- Chat history passed back into the agent is represented as Pydantic AI `ModelMessage` objects, so the LLM path no longer depends on Google GenAI message types.
-
-### Thinking / Reasoning Configuration
-
-`reasoning_effort` is forwarded as `OpenRouterModelSettings.openrouter_reasoning`. Supported values are `minimal`, `low`, `medium`, and `high`. Requests are not retried with fallback models; rate limits and backend errors are surfaced directly.
-
-### Langfuse Tracing
-
-Langfuse `generation` spans are written by the existing `tracing` helpers (`@tracing.observe`, `tracing.update_current_generation`). In-scope LangGraph runs also pass Langfuse's LangChain callback handler into `graph.invoke()` so the Fixed RAR state-machine transition graph remains visible in Langfuse. Pydantic AI's own auto-instrumentation (`Agent.instrument_all()`) is intentionally not enabled here to avoid duplicate spans under the existing `chat_turn` trace structure.
-
-### OpenRouter Defaults
-
-- `OPENROUTER_MODEL`: `google/gemini-3-flash-preview`
-- `OPENROUTER_REASONING_EFFORT`: `low`
-
-`create()` also supports the following runtime parameters (with defaults):
-
-- `temperature=0.2`
-- `top_p=0.6`
-- `seed=42`
-- `reasoning_effort="low"`
-
----
-
-## Observability with Langfuse
-
-RepoA uses Langfuse Cloud as the default observability backend for development and OSS demos. Set `LANGFUSE_BASE_URL="https://cloud.langfuse.com"` with a Langfuse Cloud public/secret key pair in `src/.env`; tracing activates automatically when both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are present. If either key is missing, `src/services/tracing.py` degrades to a no-op and makes no Langfuse network calls.
-
-Self-hosted Langfuse was useful as an infrastructure spike and as a bridge to private workplace deployments, but it is now deprecated for this repository. RepoA now prioritizes workflow/runtime design over observability infrastructure operations.
-
-Each Streamlit chat turn is captured as a single `chat_turn` trace (tagged with the workspace key, chat session id, workflow version, detected vertical, and scope status) with native LangGraph callback events for `chat_workflow`. In-scope requests show `analyze_request`, `route_by_scope`, `retrieve_supporting_context`, and the Fixed RAR nodes; out-of-scope requests show `analyze_request`, `route_by_scope`, and `out_of_scope_response`.
-
-LLM calls in `services/llm_client.py` are recorded as `generation` spans carrying the model name, input messages, output, token usage (`input` / `output` / `total`), and sampling config (`temperature`, `top_p`, `seed`, `reasoning_effort`).
-
-RepoA traces include stable tags and metadata such as `repoa`, `trend-to-rule`, `oss-demo`, `app_id=repoa`, `repo=RepoA`, `observability_backend=langfuse-cloud`, and `environment=<APP_ENV>`. Use these fields, plus workspace/session metadata, to distinguish RepoA traces from other personal OSS apps in the same Langfuse account.
-
----
+See [docs/langfuse.md](./docs/langfuse.md) for the current observability setup.
 
 ## License
 
 This project is licensed under the MIT License.
-
-This project uses third-party libraries, each of which is subject to its own license.
