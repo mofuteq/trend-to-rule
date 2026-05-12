@@ -57,7 +57,7 @@ For visual retrieval, the system prioritizes concrete wardrobe and context terms
 Image candidates are reranked with a lightweight multilingual CLIP pair:
 `sentence-transformers/clip-ViT-B-32-multilingual-v1` embeds the rendered
 text query, while `sentence-transformers/clip-ViT-B-32` embeds image
-candidates in the same CLIP space. This keeps Japanese and other multilingual
+candidates in the same CLIP space. This keeps multilingual and other non-English
 queries usable without replacing the fast image encoder used for visual
 similarity.
 
@@ -283,10 +283,11 @@ SENTENCE_TRANSFORMERS_HOME=.data/huggingface/hub
 CHAT_DB_PATH=.data/chat_db
 T2R_DEFAULT_WORKSPACE=demo
 APP_LOG_LEVEL=INFO
+APP_ENV=development
 
+LANGFUSE_BASE_URL="https://cloud.langfuse.com"
 LANGFUSE_PUBLIC_KEY=
 LANGFUSE_SECRET_KEY=
-LANGFUSE_HOST=
 
 # Optional: enable LangGraph checkpoint persistence for local non-Docker runs.
 LANGGRAPH_POSTGRES_URL=postgresql://postgres:postgres@localhost:5433/langgraph
@@ -301,13 +302,15 @@ Notes:
 - `SEARXNG_BASE_URL`: Optional SearXNG endpoint for app-side web search integration.
 - `SEARXNG_IMAGE_FETCH_LIMIT`: Number of raw image candidates fetched from SearXNG before CLIP reranking.
 - `SEARXNG_IMAGE_LIMIT`: Number of final image cards shown after CLIP reranking.
-- `CLIP_TEXT_MODEL_NAME`: Hugging Face model ID, not a filesystem path. This Sentence Transformers model embeds rendered image-search text queries. The default multilingual CLIP text encoder supports Japanese and other non-English queries.
+- `CLIP_TEXT_MODEL_NAME`: Hugging Face model ID, not a filesystem path. This Sentence Transformers model embeds rendered image-search text queries. The default multilingual CLIP text encoder supports non-English queries.
 - `CLIP_IMAGE_MODEL_NAME`: Hugging Face model ID, not a filesystem path. This Sentence Transformers model embeds image candidates in the same CLIP space as the text model.
 - `HF_HOME` / `HF_HUB_CACHE` / `TRANSFORMERS_CACHE` / `SENTENCE_TRANSFORMERS_HOME`: Shared Hugging Face cache paths. Keep `TRANSFORMERS_CACHE` and `SENTENCE_TRANSFORMERS_HOME` aligned with `HF_HUB_CACHE` so BGE-M3 and Sentence Transformers CLIP models are stored under the same hub cache root, for example `.data/huggingface/hub/models--sentence-transformers--clip-ViT-B-32`.
 - `CHAT_DB_PATH`: LMDB path for chat history and session metadata.
 - `T2R_DEFAULT_WORKSPACE`: Default sidebar workspace key for chat history. Use the same workspace key later to reopen that workspace's saved chats.
 - `APP_LOG_LEVEL`: Application log level such as `INFO` or `DEBUG`.
-- `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST`: Optional Langfuse tracing. Leave empty to disable. See [docs/langfuse.md](./docs/langfuse.md) for setup and the self-hosted Compose overlay.
+- `APP_ENV`: Environment-like label added to Langfuse metadata, for example `development`, `demo`, or `local`.
+- `LANGFUSE_BASE_URL`: Langfuse endpoint. RepoA defaults to Langfuse Cloud at `https://cloud.langfuse.com`.
+- `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`: Required only when tracing is enabled. Leave either key empty to disable Langfuse network calls.
 - `LANGGRAPH_POSTGRES_URL`: Optional. Enables LangGraph checkpoint persistence for local non-Docker runs. Docker Compose injects this automatically for the app service.
 
 `LANGGRAPH_POSTGRES_PASSWORD` is optional for Docker Compose and defaults to `postgres`. `LANGGRAPH_POSTGRES_POOL_MAX` is optional and defaults to `10`.
@@ -351,17 +354,11 @@ Compose details:
 - LangGraph checkpoints are persisted in the dedicated `langgraph-postgres` service.
 - Checkpoint data is stored under `.data/langgraph/postgres`.
 - The app waits for `langgraph-postgres` to become healthy before starting.
-- This Postgres is separate from the optional Langfuse Postgres in `docker-compose.langfuse.yml`.
+- This Postgres is separate from observability infrastructure.
 
-All persistent state lives on the host under `.data/` (git-ignored). Qdrant uses `.data/qdrant/`; the optional Langfuse overlay uses `.data/langfuse/{postgres,clickhouse,clickhouse-logs,valkey,seaweedfs}/`.
+All persistent state lives on the host under `.data/` (git-ignored). Qdrant uses `.data/qdrant/`; LangGraph checkpoint Postgres uses `.data/langgraph/postgres/`.
 
-For optional Langfuse-backed tracing, start the overlay alongside the base stack:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.langfuse.yml up -d
-```
-
-See [docs/langfuse.md](./docs/langfuse.md) for setup, bootstrap, env vars, and the SeaweedFS-backed self-hosted stack.
+For Langfuse tracing, use Langfuse Cloud credentials in `src/.env`. See [docs/langfuse.md](./docs/langfuse.md) for the current observability setup.
 
 ---
 
@@ -378,7 +375,7 @@ This matters because large local models such as `BAAI/bge-m3` and the CLIP
 encoders are part of the local product runtime, not disposable test fixtures.
 Keeping the cache under `.data/` prevents repeated downloads across local and
 container runs and keeps model state visible alongside the rest of the
-self-hosted stack.
+local runtime stack.
 
 Vector search now attempts one automatic recovery: it removes interrupted
 downloads or the affected model cache directory, then retries the model load so
@@ -728,13 +725,15 @@ Langfuse `generation` spans are written by the existing `tracing` helpers (`@tra
 
 ## Observability with Langfuse
 
-LLM calls and pipeline stages are optionally traced via [Langfuse](https://langfuse.com/). Tracing activates automatically when both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are present in `src/.env`; otherwise `src/services/tracing.py` degrades to a no-op.
+RepoA uses Langfuse Cloud as the default observability backend for development and OSS demos. Set `LANGFUSE_BASE_URL="https://cloud.langfuse.com"` with a Langfuse Cloud public/secret key pair in `src/.env`; tracing activates automatically when both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are present. If either key is missing, `src/services/tracing.py` degrades to a no-op and makes no Langfuse network calls.
+
+Self-hosted Langfuse was useful as an infrastructure spike and as a bridge to private workplace deployments, but it is now deprecated for this repository. RepoA now prioritizes workflow/runtime design over observability infrastructure operations.
 
 Each Streamlit chat turn is captured as a single `chat_turn` trace (tagged with the workspace key, chat session id, workflow version, detected vertical, and scope status) with native LangGraph callback events for `chat_workflow`. In-scope requests show `analyze_request`, `route_by_scope`, `retrieve_supporting_context`, and the Fixed RAR nodes; out-of-scope requests show `analyze_request`, `route_by_scope`, and `out_of_scope_response`.
 
 LLM calls in `services/llm_client.py` are recorded as `generation` spans carrying the model name, input messages, output, token usage (`input` / `output` / `total`), and sampling config (`temperature`, `top_p`, `seed`, `reasoning_effort`).
 
-For self-hosting the Langfuse stack via Compose overlay, see [docs/langfuse.md](./docs/langfuse.md).
+RepoA traces include stable tags and metadata such as `repoa`, `trend-to-rule`, `oss-demo`, `app_id=repoa`, `repo=RepoA`, `observability_backend=langfuse-cloud`, and `environment=<APP_ENV>`. Use these fields, plus workspace/session metadata, to distinguish RepoA traces from other personal OSS apps in the same Langfuse account.
 
 ---
 

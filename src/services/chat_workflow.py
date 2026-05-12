@@ -396,8 +396,9 @@ def generate_assistant_response(
         history=history,
     )
     resolved_thread_id = thread_id or str(uuid.uuid4())
-    tags = ["trend-to-rule", "chat_workflow", "langgraph"]
+    tags = [*tracing.get_repoa_trace_tags(), "chat_workflow", "langgraph"]
     metadata = {
+        **tracing.get_repoa_trace_metadata(),
         "chat_id": langfuse_session_id,
         "langfuse_session_id": langfuse_session_id,
         "langfuse_user_id": langfuse_user_id,

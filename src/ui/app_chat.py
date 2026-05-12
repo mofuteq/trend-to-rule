@@ -147,8 +147,13 @@ def process_user_prompt(
             user_id=user_id,
             session_id=st.session_state.chat_id,
             input=normalized_prompt,
-            tags=["trend-to-rule", "chat_turn", f"workflow:{WORKFLOW_VERSION}"],
+            tags=[
+                *tracing.get_repoa_trace_tags(),
+                "chat_turn",
+                f"workflow:{WORKFLOW_VERSION}",
+            ],
             metadata={
+                **tracing.get_repoa_trace_metadata(),
                 "chat_id": st.session_state.chat_id,
                 "chat_turn": st.session_state.chat_turn,
                 "workflow_version": WORKFLOW_VERSION,
@@ -259,13 +264,14 @@ def process_user_prompt(
                 },
             },
             tags=[
-                "trend-to-rule",
+                *tracing.get_repoa_trace_tags(),
                 "chat_turn",
                 f"workflow:{WORKFLOW_VERSION}",
                 f"vertical:{request_analysis.vertical}",
                 f"in_scope:{request_analysis.is_in_scope}",
             ],
             metadata={
+                **tracing.get_repoa_trace_metadata(),
                 "chat_turn": st.session_state.chat_turn,
                 "request_goal": request_analysis.request_goal,
                 "vertical": request_analysis.vertical,
