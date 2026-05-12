@@ -169,6 +169,24 @@ def get_langchain_callback_handler() -> Any:
         return None
 
 
+def get_langchain_invoke_config(
+    *,
+    run_name: str,
+    tags: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build optional LangChain callback config for LangGraph invocation."""
+    config: dict[str, Any] = {"run_name": run_name}
+    if tags:
+        config["tags"] = tags
+    if metadata:
+        config["metadata"] = metadata
+    langfuse_callback = get_langchain_callback_handler()
+    if langfuse_callback is not None:
+        config["callbacks"] = [langfuse_callback]
+    return config
+
+
 @contextmanager
 def propagate_attributes(**kwargs: Any):
     """Propagate trace-level attributes with a no-op fallback when disabled."""
@@ -201,6 +219,7 @@ __all__ = [
     "flush",
     "get_client",
     "get_langchain_callback_handler",
+    "get_langchain_invoke_config",
     "is_enabled",
     "observe",
     "propagate_attributes",

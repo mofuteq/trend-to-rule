@@ -6,7 +6,7 @@ from core.app_config import AppConfig
 from core.text_utils import normalize_text_nfkc
 from retrieval.app_retrieval import build_retrieved_results_html_table
 from services import tracing
-from services.chat import analyze_request, generate_chat_title
+from services.chat import generate_chat_title
 from services.llm_client import (
     DEFAULT_OPENROUTER_MODEL,
     DEFAULT_OPENROUTER_REASONING_EFFORT,
@@ -17,7 +17,6 @@ from services.llm_client import (
 from services.chat_workflow import (
     RetrievalBundle,
     generate_assistant_response,
-    retrieve_supporting_context,
 )
 from services.image_search import ImageSearchResult
 from storage.chat_db import ChatDB
@@ -31,13 +30,6 @@ from ui.app_state import (
 logger = logging.getLogger(__name__)
 ASSISTANT_AVATAR = ":material/auto_awesome:"
 WORKFLOW_VERSION = "v1"
-OUT_OF_SCOPE_MESSAGE = (
-    "This app is focused on fashion, styling, and trend analysis.\n"
-    "This request appears to be outside that scope, so I did not run retrieval or "
-    "reasoning.\n"
-    "Please reframe the question in a fashion, styling, outfit, apparel, visual "
-    "reference, or trend-related context."
-)
 
 
 def render_history() -> None:
@@ -167,48 +159,26 @@ def process_user_prompt(
             st.markdown(normalized_prompt)
         with st.chat_message("assistant", avatar=ASSISTANT_AVATAR):
             with st.status("Analyzing...", expanded=False) as status:
-                request_analysis = analyze_request(
+                assistant_response = generate_assistant_response(
                     user_prompt=normalized_prompt,
+                    config=config,
                     last_request_goal=st.session_state.last_request_goal,
-                    history=prior_history or None,
+                    history=prior_history,
+                    thread_id=(
+                        f"{st.session_state.chat_id}:{st.session_state.chat_turn}"
+                    ),
+                    langfuse_session_id=st.session_state.chat_id,
+                    langfuse_user_id=user_id,
                 )
+                request_analysis = assistant_response.request_analysis
+                retrieval = assistant_response.retrieval
+                assistant_rule = assistant_response.rule
                 st.write(request_analysis)
-
-                retrieval = RetrievalBundle(
-                    canonical_context="",
-                    emerging_context="",
-                    canonical_rows=[],
-                    emerging_rows=[],
-                )
-                assistant_response = None
                 if not request_analysis.is_in_scope:
-                    assistant_rule = OUT_OF_SCOPE_MESSAGE
                     status.update(
                         label="Outside app scope", state="complete", expanded=False
                     )
                 else:
-                    status.update(label="Retrieving context...", expanded=False)
-                    try:
-                        retrieval = retrieve_supporting_context(
-                            request_analysis,
-                            config=config,
-                        )
-                    except Exception as err:
-                        st.warning(f"Vector search failed: {err}")
-
-                    status.update(label="Thinking...", expanded=False)
-                    assistant_response = generate_assistant_response(
-                        user_prompt=normalized_prompt,
-                        request_analysis=request_analysis,
-                        retrieval=retrieval,
-                        config=config,
-                        last_request_goal=st.session_state.last_request_goal,
-                        history=prior_history,
-                        thread_id=(
-                            f"{st.session_state.chat_id}:{st.session_state.chat_turn}"
-                        ),
-                    )
-                    assistant_rule = assistant_response.rule
                     st.write(assistant_response.structured_claims)
                     st.write(assistant_response.structured_draft)
                     st.write(assistant_response.image_query)
@@ -217,7 +187,7 @@ def process_user_prompt(
                     )
 
             stream_markdown_text(assistant_rule)
-            if assistant_response is not None:
+            if request_analysis.is_in_scope:
                 render_image_results(assistant_response.image_results)
             render_retrieved_results(retrieval)
 
@@ -271,25 +241,17 @@ def process_user_prompt(
                 "candidate_queries": request_analysis.candidate_queries.model_dump(),
                 "structured_claims": (
                     assistant_response.structured_claims.model_dump()
-                    if assistant_response is not None
+                    if assistant_response.structured_claims is not None
                     else None
                 ),
                 "structured_draft": (
                     assistant_response.structured_draft.model_dump()
-                    if assistant_response is not None
+                    if assistant_response.structured_draft is not None
                     else None
                 ),
-                "image_query": (
-                    assistant_response.image_query
-                    if assistant_response is not None
-                    else ""
-                ),
+                "image_query": assistant_response.image_query,
                 "image_results": [
-                    item.model_dump() for item in (
-                        assistant_response.image_results
-                        if assistant_response is not None
-                        else []
-                    )
+                    item.model_dump() for item in assistant_response.image_results
                 ],
                 "retrieval": {
                     "canonical_rows": retrieval.canonical_rows,
@@ -308,26 +270,18 @@ def process_user_prompt(
                 "request_goal": request_analysis.request_goal,
                 "vertical": request_analysis.vertical,
                 "is_in_scope": request_analysis.is_in_scope,
-                "image_query": (
-                    assistant_response.image_query
-                    if assistant_response is not None
-                    else ""
-                ),
-                "image_result_count": (
-                    len(assistant_response.image_results)
-                    if assistant_response is not None
-                    else 0
-                ),
+                "image_query": assistant_response.image_query,
+                "image_result_count": len(assistant_response.image_results),
                 "canonical_hits": len(retrieval.canonical_rows),
                 "emerging_hits": len(retrieval.emerging_rows),
                 "canonical_claim_count": (
                     len(assistant_response.structured_claims.canonical_claims)
-                    if assistant_response is not None
+                    if assistant_response.structured_claims is not None
                     else 0
                 ),
                 "emerging_claim_count": (
                     len(assistant_response.structured_claims.emerging_claims)
-                    if assistant_response is not None
+                    if assistant_response.structured_claims is not None
                     else 0
                 ),
                 "model_params": {

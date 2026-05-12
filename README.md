@@ -112,9 +112,11 @@ flowchart TD
     C -->|Dense + Sparse vectors| D[(Qdrant collection)]
     C -->|Payload metadata\npublished_at/ingested_at\npublished_ts/ingested_ts| D
 
-    E[Streamlit app.py] --> F[analyze_request]
-    F -->|in scope| G[canonical_query / emerging_query]
-    F -->|out of scope| X[fixed abstention]
+    E[Streamlit app.py] --> W[chat_workflow LangGraph]
+    W --> F[analyze_request]
+    F --> R{route_by_scope}
+    R -->|in scope| G[canonical_query / emerging_query]
+    R -->|out of scope| X[fixed abstention]
 
     G --> H[app_retrieval.py]
     H -->|Hybrid search + time filter| D
@@ -153,26 +155,31 @@ flowchart TD
 
 ## State Machine Architecture
 
-The Fixed RAR (Retrieval-Augmented Reasoning) flow is implemented as a LangGraph state machine in `src/services/chat_workflow.py`. The current graph topology is intentionally **linear**: `extract_claims → extract_structured_draft → generate_decision_support → generate_query → render_image_query → search_images`. The project deliberately prioritizes **deterministic orchestration** before introducing agentic branching, so every chat turn traverses the same ordered nodes and produces the same intermediate artifacts for the same inputs.
+The chat workflow is implemented as a LangGraph state machine in `src/services/chat_workflow.py`. The graph starts with request analysis and scope routing, then either returns the fixed abstention response or enters the existing Fixed RAR (Retrieval-Augmented Reasoning) path: `retrieve_supporting_context → extract_claims → extract_structured_draft → generate_decision_support → generate_query → render_image_query → search_images`. The project deliberately keeps the in-scope RAR path deterministic while making the request-analysis and scope decision visible as first-class state transitions.
 
-Each node consumes and extends a single typed shared state (`AssistantResponseState`, a Pydantic `BaseModel`). Nodes return partial dict updates with only the fields they produce — claims, structured draft, rule, query spec, image query, image results — and downstream nodes read those fields by attribute. Modeling the exchange surface as a Pydantic schema keeps node boundaries explicit and makes each transition auditable.
+Each node consumes and extends a single typed shared state (`AssistantResponseState`, a Pydantic `BaseModel`). Nodes return partial dict updates with only the fields they produce — request analysis, retrieval, claims, structured draft, rule, query spec, image query, image results — and downstream nodes read those fields by attribute. Modeling the exchange surface as a Pydantic schema keeps node boundaries explicit and makes each transition auditable.
 
 ```mermaid
 flowchart LR
-    S([START]) --> EC[extract_claims]
+    S([START]) --> AR[analyze_request]
+    AR --> R[route_by_scope]
+    R -->|out of scope| OOS[out_of_scope_response]
+    OOS --> E([END])
+    R -->|in scope| RSC[retrieve_supporting_context]
+    RSC --> EC[extract_claims]
     EC --> ESD[extract_structured_draft]
     ESD --> GDS[generate_decision_support]
     GDS --> GQ[generate_query]
     GQ --> RIQ[render_image_query]
     RIQ --> SI[search_images]
-    SI --> E([END])
+    SI --> E
 ```
 
 Checkpoints are persisted to a dedicated Postgres instance (`langgraph-postgres` in `docker-compose.yml`, kept separate from the Langfuse stack) via `PostgresSaver` from `langgraph-checkpoint-postgres`. The checkpointer is attached at compile time when `LANGGRAPH_POSTGRES_URL` is set; otherwise the graph compiles without persistence so local runs without the container still work.
 
 `thread_id` is currently scoped to `chat_id:chat_turn`, intentionally — i.e. one LangGraph thread per chat turn rather than per chat. This keeps each turn starting from a clean initial state (matching the pre-checkpointer behavior) while still persisting every node transition so a specific turn can be inspected later by its `chat_id:chat_turn` key. It also keeps the door open to longer-lived threads in future work without changing today's contract.
 
-Future work — tracked under "Stateful Agentic RAR" — includes: conditional edges between nodes, sufficiency checks (e.g. claim/draft adequacy gates), retrieval loops that re-query when context is insufficient, and longer-lived stateful workflows that resume across turns. These are intentionally out of scope for the current graph; the linear topology exists as a reproducible, inspectable substrate to evolve incrementally rather than a finished agentic system.
+Future work — tracked under "Stateful Agentic RAR" — includes: sufficiency checks (e.g. claim/draft adequacy gates), retrieval loops that re-query when context is insufficient, and longer-lived stateful workflows that resume across turns. These are intentionally out of scope for the current graph; the current topology exists as a reproducible, inspectable substrate to evolve incrementally rather than a finished agentic system.
 
 ## Directory Layout
 
@@ -723,7 +730,7 @@ Langfuse `generation` spans are written by the existing `tracing` helpers (`@tra
 
 LLM calls and pipeline stages are optionally traced via [Langfuse](https://langfuse.com/). Tracing activates automatically when both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are present in `src/.env`; otherwise `src/services/tracing.py` degrades to a no-op.
 
-Each Streamlit chat turn is captured as a single `chat_turn` trace (tagged with the workspace key, chat session id, workflow version, detected vertical, and scope status) with nested spans for `analyze_request`, `retrieve_supporting_context`, `extract_claims`, `extract_structured_draft`, `generate_decision_support`, `generate_query`, and `generate_chat_title`. For in-scope requests, Langfuse also receives the native LangGraph callback events for `assistant_response_graph`; out-of-scope requests stop after request analysis and the fixed abstention response.
+Each Streamlit chat turn is captured as a single `chat_turn` trace (tagged with the workspace key, chat session id, workflow version, detected vertical, and scope status) with native LangGraph callback events for `chat_workflow`. In-scope requests show `analyze_request`, `route_by_scope`, `retrieve_supporting_context`, and the Fixed RAR nodes; out-of-scope requests show `analyze_request`, `route_by_scope`, and `out_of_scope_response`.
 
 LLM calls in `services/llm_client.py` are recorded as `generation` spans carrying the model name, input messages, output, token usage (`input` / `output` / `total`), and sampling config (`temperature`, `top_p`, `seed`, `reasoning_effort`).
 
