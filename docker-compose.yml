@@ -7,15 +7,12 @@ services:
     depends_on:
       qdrant:
         condition: service_started
-      searxng:
-        condition: service_started
       langgraph-postgres:
         condition: service_healthy
     env_file:
       - ./src/.env
     environment:
       VECTOR_QDRANT_URL: http://qdrant:6333
-      SEARXNG_BASE_URL: http://searxng:8080
       LANGGRAPH_POSTGRES_URL: postgresql://postgres:${LANGGRAPH_POSTGRES_PASSWORD:-postgres}@langgraph-postgres:5432/langgraph
     ports:
       - "8501:8501"
@@ -50,6 +47,7 @@ services:
       - ./.data/qdrant:/qdrant/storage
     restart: unless-stopped
 
+  # Legacy/optional visual-search backend. The app uses Tavily by default.
   searxng:
     image: searxng/searxng:2026.3.20-6c7e9c197
     container_name: trend-to-rule-searxng
