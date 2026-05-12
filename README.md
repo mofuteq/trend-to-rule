@@ -189,8 +189,6 @@ The codebase is organized to mirror the pipeline described above.
 trend-to-rule/
 ├── .data/
 ├── docker-compose.yml
-├── searxng/
-│   └── settings.yml
 ├── src/
 │   ├── app.py
 │   ├── Dockerfile
@@ -208,8 +206,7 @@ trend-to-rule/
 ```
 
 - `.data/`: Local runtime artifacts such as LMDB files, JSONL debug outputs, chat state, Qdrant storage, logs, and shared Hugging Face model caches.
-- `docker-compose.yml`: Local multi-service runtime for the app, Qdrant, optional legacy SearXNG, and LangGraph checkpoint Postgres.
-- `searxng/`: Legacy local SearXNG configuration kept for optional visual-search experiments. Tavily is the default visual retrieval backend.
+- `docker-compose.yml`: Local multi-service runtime for the app, Qdrant, and LangGraph checkpoint Postgres.
 - `src/.env`: Local environment variables for app and pipeline runs.
 - `src/Dockerfile`: Container image definition for the Streamlit app.
 - `src/core/`: Shared configuration, domain models, and reusable query/text/template helpers.
@@ -273,8 +270,6 @@ TAVILY_API_KEY=your-tavily-api-key
 TAVILY_IMAGE_FETCH_LIMIT=10
 TAVILY_IMAGE_LIMIT=3
 TAVILY_INCLUDE_IMAGE_DESCRIPTIONS=true
-# Legacy/optional: SearXNG is no longer the default visual retrieval backend.
-SEARXNG_BASE_URL=http://localhost:8008
 CLIP_TEXT_MODEL_NAME=sentence-transformers/clip-ViT-B-32-multilingual-v1
 CLIP_IMAGE_MODEL_NAME=sentence-transformers/clip-ViT-B-32
 
@@ -306,7 +301,6 @@ Notes:
 - `TAVILY_IMAGE_FETCH_LIMIT`: Number of raw Tavily image candidates normalized before CLIP reranking.
 - `TAVILY_IMAGE_LIMIT`: Number of final image cards shown after CLIP reranking.
 - `TAVILY_INCLUDE_IMAGE_DESCRIPTIONS`: Whether Tavily should return image descriptions when available.
-- `SEARXNG_BASE_URL`: Legacy/optional SearXNG endpoint. SearXNG is deprecated for default visual retrieval.
 - `CLIP_TEXT_MODEL_NAME`: Hugging Face model ID, not a filesystem path. This Sentence Transformers model embeds rendered image-search text queries. The default multilingual CLIP text encoder supports non-English queries.
 - `CLIP_IMAGE_MODEL_NAME`: Hugging Face model ID, not a filesystem path. This Sentence Transformers model embeds image candidates in the same CLIP space as the text model.
 - `HF_HOME` / `HF_HUB_CACHE` / `TRANSFORMERS_CACHE` / `SENTENCE_TRANSFORMERS_HOME`: Shared Hugging Face cache paths. Keep `TRANSFORMERS_CACHE` and `SENTENCE_TRANSFORMERS_HOME` aligned with `HF_HUB_CACHE` so BGE-M3 and Sentence Transformers CLIP models are stored under the same hub cache root, for example `.data/huggingface/hub/models--sentence-transformers--clip-ViT-B-32`.
@@ -320,15 +314,9 @@ Notes:
 
 `LANGGRAPH_POSTGRES_PASSWORD` is optional for Docker Compose and defaults to `postgres`. `LANGGRAPH_POSTGRES_POOL_MAX` is optional and defaults to `10`.
 
-Legacy SearXNG JSON response example:
-
-```bash
-curl "http://localhost:8008/search?q=silicon+valley+fashion&format=json"
-```
-
 ## Run With Docker Compose
 
-Start the Streamlit app, Qdrant, optional legacy SearXNG, and the LangGraph checkpoint Postgres together with the bundled Compose file:
+Start the Streamlit app, Qdrant, and the LangGraph checkpoint Postgres together with the bundled Compose file:
 
 ```bash
 docker compose up -d
@@ -338,7 +326,6 @@ Services will be available at:
 
 - Streamlit app: `http://localhost:8501`
 - Qdrant: `http://localhost:6333`
-- SearXNG legacy/optional: `http://localhost:8008`
 - LangGraph checkpoint Postgres: `localhost:5433` -> container `langgraph-postgres:5432`
 
 To stop it:
@@ -352,8 +339,7 @@ Compose details:
 - The app image is built from [`src/Dockerfile`](./src/Dockerfile) using `debian:stable-slim`.
 - The app is started with `uv run streamlit run src/app.py`.
 - The app connects to Qdrant over the Compose network using `http://qdrant:6333`.
-- Tavily is the default visual retrieval backend and is configured with `TAVILY_API_KEY`.
-- SearXNG remains in Compose as a legacy optional service for experiments. It is configured via [`searxng/settings.yml`](./searxng/settings.yml), allows `format=json` responses, and uses a non-default `server.secret_key`.
+- Tavily is the visual retrieval backend and is configured with `TAVILY_API_KEY`.
 - Local runtime data is mounted from `.data/` into the container at `/app/.data`, including Qdrant storage, logs, and shared Hugging Face model caches.
 - Environment variables are loaded from `src/.env` via `env_file`.
 - LangGraph checkpoints are persisted in the dedicated `langgraph-postgres` service.

@@ -50,9 +50,6 @@ class AppConfig:
     tavily_image_fetch_limit: int
     tavily_image_limit: int
     tavily_include_image_descriptions: bool
-    searxng_base_url: str
-    searxng_image_fetch_limit: int
-    searxng_image_limit: int
     workspace_query_key: str
     default_workspace_key: str
 
@@ -83,23 +80,11 @@ def load_app_config() -> AppConfig:
         vector_mmr_diversity=float(os.getenv("VECTOR_MMR_DIVERSITY", "0.3")),
         app_log_level=os.getenv("APP_LOG_LEVEL", "INFO").upper(),
         tavily_api_key=os.getenv("TAVILY_API_KEY", ""),
-        tavily_image_fetch_limit=int(
-            os.getenv(
-                "TAVILY_IMAGE_FETCH_LIMIT",
-                os.getenv("SEARXNG_IMAGE_FETCH_LIMIT", "10"),
-            )
-        ),
-        tavily_image_limit=int(
-            os.getenv("TAVILY_IMAGE_LIMIT", os.getenv("SEARXNG_IMAGE_LIMIT", "3"))
-        ),
+        tavily_image_fetch_limit=int(os.getenv("TAVILY_IMAGE_FETCH_LIMIT", "10")),
+        tavily_image_limit=int(os.getenv("TAVILY_IMAGE_LIMIT", "3")),
         tavily_include_image_descriptions=_parse_bool(
             os.getenv("TAVILY_INCLUDE_IMAGE_DESCRIPTIONS", "true")
         ),
-        searxng_base_url=os.getenv("SEARXNG_BASE_URL", "http://localhost:8008"),
-        searxng_image_fetch_limit=int(
-            os.getenv("SEARXNG_IMAGE_FETCH_LIMIT", "10")
-        ),
-        searxng_image_limit=int(os.getenv("SEARXNG_IMAGE_LIMIT", "3")),
         workspace_query_key="workspace",
         default_workspace_key=os.getenv("T2R_DEFAULT_WORKSPACE", "demo"),
     )
