@@ -59,6 +59,7 @@ def generate_search_query(
             now=datetime.now()
         ),
         response_model=SearchQuery,
+        reasoning_effort="low",
     )
     return search_query
 
@@ -91,6 +92,7 @@ def infer_attribute(
         temperature=0.0,
         top_p=0.6,
         seed=42,
+        reasoning_effort="minimal",
     )
     return res
 
@@ -121,6 +123,7 @@ def analyze_request(
             last_request_goal=last_request_goal
         ),
         response_model=RequestGoal,
+        reasoning_effort="medium",
         history=history,
     )
     search_query = generate_search_query(
@@ -168,6 +171,7 @@ def extract_claims(
             emerging_context=emerging_context
         ),
         response_model=StructuredClaims,
+        reasoning_effort="low",
     )
     return res
 
@@ -218,6 +222,7 @@ def extract_structured_draft(
             now=datetime.now()
         ),
         response_model=StructuredDraft,
+        reasoning_effort="medium",
     )
     return res
 
@@ -283,6 +288,7 @@ def generate_query(
             request_goal=request_goal
         ),
         response_model=ExampleQuerySpec,
+        reasoning_effort="low",
     )
     return res
 
@@ -320,6 +326,7 @@ def generate_chat_title(
         .module.system(),
         temperature=0.2,
         top_p=0.8,
+        reasoning_effort="low",
     )
     title = str(res.text or "").strip()
     return title or "Untitled chat"
