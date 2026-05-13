@@ -59,7 +59,6 @@ def generate_search_query(
             now=datetime.now()
         ),
         response_model=SearchQuery,
-        reasoning_effort="low",
     )
     return search_query
 
@@ -171,7 +170,6 @@ def extract_claims(
             emerging_context=emerging_context
         ),
         response_model=StructuredClaims,
-        reasoning_effort="low",
     )
     return res
 
@@ -288,7 +286,6 @@ def generate_query(
             request_goal=request_goal
         ),
         response_model=ExampleQuerySpec,
-        reasoning_effort="low",
     )
     return res
 
@@ -326,7 +323,6 @@ def generate_chat_title(
         .module.system(),
         temperature=0.2,
         top_p=0.8,
-        reasoning_effort="low",
     )
     title = str(res.text or "").strip()
     return title or "Untitled chat"
