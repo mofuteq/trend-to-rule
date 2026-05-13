@@ -1,31 +1,15 @@
 import unicodedata
-from functools import lru_cache
-from io import BytesIO
 import logging
 import os
-from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
-from core.hf_cache import configure_huggingface_cache
-from PIL import Image
 from pydantic import BaseModel, field_validator
-
-configure_huggingface_cache()
 
 
 DEFAULT_TAVILY_SEARCH_URL = "https://api.tavily.com/search"
-DEFAULT_CLIP_MODEL_FAMILY = "sentence-transformers/clip-ViT-B-32"
-DEFAULT_CLIP_TEXT_MODEL_NAME = os.getenv(
-    "CLIP_TEXT_MODEL_NAME",
-    f"{DEFAULT_CLIP_MODEL_FAMILY}-multilingual-v1",
-)
-DEFAULT_CLIP_IMAGE_MODEL_NAME = os.getenv(
-    "CLIP_IMAGE_MODEL_NAME",
-    DEFAULT_CLIP_MODEL_FAMILY,
-)
 DEFAULT_IMAGE_FETCH_LIMIT = 10
-DEFAULT_IMAGE_RERANK_LIMIT = 3
+DEFAULT_IMAGE_RESULT_LIMIT = 3
 DEFAULT_HEADERS = {
     "User-Agent": "Mozilla/5.0",
     "Accept": "application/json",
@@ -54,7 +38,6 @@ class ImageSearchResult(BaseModel):
     thumbnail_url: str
     source: str
     engine: str
-    clip_score: float | None = None
 
     @field_validator("image_url")
     @classmethod
@@ -99,7 +82,7 @@ def search_images(
         search_url: Tavily Search API endpoint.
 
     Returns:
-        A list of normalized image-search results.
+        A list of normalized image-search results in Tavily-provided order.
     """
     normalized_query = unicodedata.normalize("NFKC", query).strip()
     resolved_api_key = (
@@ -181,103 +164,22 @@ def search_images(
     return items[:limit]
 
 
-def rerank_with_clip(
-    query: str,
-    candidates: list[ImageSearchResult],
-) -> list[ImageSearchResult]:
-    """Rerank image-search results by CLIP similarity to the text query."""
-    normalized_query = unicodedata.normalize("NFKC", query).strip()
-    if not normalized_query or not candidates:
-        return candidates
-
-    logger.info(
-        "image_rerank_start query=%r candidate_count=%s",
-        normalized_query,
-        len(candidates),
-    )
-
-    clip_bundle = get_clip_bundle()
-    valid_results: list[ImageSearchResult] = []
-    valid_images: list[Image.Image] = []
-    with httpx.Client(headers=DEFAULT_HEADERS, follow_redirects=True, timeout=20.0) as client:
-        for item in candidates:
-            image = _fetch_image(client, item)
-            if image is None:
-                continue
-            valid_results.append(item)
-            valid_images.append(image)
-
-    if not valid_results:
-        logger.info("image_rerank_no_valid_images query=%r", normalized_query)
-        return candidates
-
-    import torch
-
-    with torch.inference_mode():
-        text_features = clip_bundle.text_model.encode(
-            [normalized_query],
-            convert_to_tensor=True,
-            device=clip_bundle.device,
-            **_clip_encode_options(),
-        )
-        image_features = clip_bundle.image_model.encode(
-            valid_images,
-            convert_to_tensor=True,
-            device=clip_bundle.device,
-            **_clip_encode_options(),
-        )
-
-        similarities = torch.matmul(image_features, text_features.T).squeeze(-1)
-
-    scored_results = [
-        result.model_copy(update={"clip_score": float(score)})
-        for result, score in zip(valid_results, similarities.tolist())
-    ]
-    scored_results.sort(
-        key=lambda item: item.clip_score if item.clip_score is not None else float("-inf"),
-        reverse=True,
-    )
-    for item in scored_results:
-        logger.info(
-            "image_rerank_score title=%r source=%r clip_score=%.4f image_url=%s",
-            item.title,
-            item.source,
-            item.clip_score if item.clip_score is not None else float("nan"),
-            item.image_url,
-        )
-    return scored_results
-
-
 def select_top_k(
     candidates: list[ImageSearchResult],
     *,
-    k: int = DEFAULT_IMAGE_RERANK_LIMIT,
+    k: int = DEFAULT_IMAGE_RESULT_LIMIT,
 ) -> list[ImageSearchResult]:
-    """Select the top-k reranked candidates."""
+    """Select the first top-k candidates from the backend-provided order."""
     selected = candidates[:k]
     for idx, item in enumerate(selected, start=1):
         logger.info(
-            "image_rerank_selected rank=%s title=%r source=%r clip_score=%s image_url=%s",
+            "image_candidate_selected rank=%s title=%r source=%r image_url=%s",
             idx,
             item.title,
             item.source,
-            f"{item.clip_score:.4f}" if item.clip_score is not None else "n/a",
             item.image_url,
         )
     return selected
-
-
-def _fetch_image(client: httpx.Client, item: ImageSearchResult) -> Image.Image | None:
-    """Download and decode one image for CLIP scoring."""
-    image_url = (item.image_url or "").strip()
-    if not image_url:
-        return None
-    try:
-        response = client.get(image_url)
-        response.raise_for_status()
-        return Image.open(BytesIO(response.content)).convert("RGB")
-    except Exception:
-        return None
 
 
 def _append_tavily_image_candidate(
@@ -375,59 +277,3 @@ def _normalize_dedupe_url(value: str) -> str:
             "",
         )
     )
-
-
-@lru_cache(maxsize=1)
-def get_clip_bundle() -> "_ClipBundle":
-    """Load and cache the CLIP model, processor, and runtime device."""
-    from sentence_transformers import SentenceTransformer
-
-    cache_root = configure_huggingface_cache()
-    sentence_transformers_cache = os.environ.get(
-        "SENTENCE_TRANSFORMERS_HOME",
-        os.environ.get("HF_HUB_CACHE", str(cache_root / "hub")),
-    )
-    device = _resolve_clip_device()
-    text_model = SentenceTransformer(
-        DEFAULT_CLIP_TEXT_MODEL_NAME,
-        cache_folder=sentence_transformers_cache,
-        device=device,
-    )
-    image_model = SentenceTransformer(
-        DEFAULT_CLIP_IMAGE_MODEL_NAME,
-        cache_folder=sentence_transformers_cache,
-        device=device,
-    )
-    text_model.eval()
-    image_model.eval()
-    return _ClipBundle(
-        text_model=text_model,
-        image_model=image_model,
-        device=device,
-    )
-
-
-def _resolve_clip_device() -> str:
-    """Choose the best available device for CLIP inference."""
-    import torch
-
-    if torch.backends.mps.is_available():
-        return "mps"
-    if torch.cuda.is_available():
-        return "cuda"
-    return "cpu"
-
-
-def _clip_encode_options() -> dict[str, bool]:
-    """Return Sentence Transformers encode options used for CLIP scoring."""
-    return {"normalize_" + "".join(("em", "beddings")): True}
-
-
-class _ClipBundle(BaseModel):
-    """Cached CLIP runtime components."""
-
-    text_model: Any
-    image_model: Any
-    device: str
-
-    model_config = {"arbitrary_types_allowed": True}

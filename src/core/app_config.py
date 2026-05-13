@@ -4,15 +4,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from core.hf_cache import configure_huggingface_cache
-
 
 SRC_ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = SRC_ROOT.parent
 ENV_PATH = SRC_ROOT / ".env"
 if ENV_PATH.is_file():
     load_dotenv(ENV_PATH)
-configure_huggingface_cache()
 
 
 def resolve_project_path(raw_path: str) -> Path:
