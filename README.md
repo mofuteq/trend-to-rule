@@ -160,14 +160,18 @@ uv sync
 
 Create `src/.env` for local runs and Docker Compose `env_file`.
 
-The app talks to an OpenAI-compatible LLM endpoint. OpenRouter is the default
-example endpoint; point `LLM_BASE_URL` at any OpenAI-compatible provider.
+The app uses Pydantic AI with `LiteLLMProvider`. LiteLLM runs in-process
+through Pydantic AI's provider layer; no LiteLLM Proxy or extra server is
+required. The default `LLM_MODEL` uses the LiteLLM `openrouter/...` prefix,
+so OpenRouter is the default example provider out of the box. Set
+`LLM_BASE_URL` to point at a custom OpenAI-compatible endpoint or an
+internal gateway; leave it empty to let LiteLLM use its built-in default
+for the selected model prefix.
 
 ```dotenv
-LLM_BASE_URL=https://openrouter.ai/api/v1
+LLM_MODEL=openrouter/google/gemini-3-flash-preview
 LLM_API_KEY=
-LLM_MODEL=google/gemini-3-flash-preview
-LLM_REASONING_EFFORT=low
+LLM_BASE_URL=
 
 TAVILY_API_KEY=
 TAVILY_TEXT_MAX_RESULTS=5
@@ -191,11 +195,13 @@ LANGGRAPH_SQLITE_PATH=.data/langgraph/checkpoints.sqlite
 
 Key settings:
 
-- `LLM_BASE_URL`: OpenAI-compatible endpoint. Defaults to OpenRouter
-  (`https://openrouter.ai/api/v1`).
-- `LLM_API_KEY`: required API key for the configured LLM endpoint.
-- `LLM_MODEL`: model identifier passed to the endpoint.
-- `LLM_REASONING_EFFORT`: one of `minimal`, `low`, `medium`, `high`.
+- `LLM_MODEL`: LiteLLM-style model identifier, e.g.
+  `openrouter/google/gemini-3-flash-preview`. The provider prefix selects
+  the upstream backend.
+- `LLM_API_KEY`: required API key for the selected backend.
+- `LLM_BASE_URL`: optional. When empty, LiteLLM uses its built-in default
+  for the model prefix. Set it to override with a custom OpenAI-compatible
+  endpoint or an internal gateway.
 - `TAVILY_API_KEY`: required for in-scope text evidence retrieval and also used
   by visual retrieval.
 - `TAVILY_TEXT_MAX_RESULTS`: per-lane text result cap. Default: `5`.

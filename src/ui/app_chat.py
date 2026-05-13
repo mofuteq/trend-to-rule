@@ -8,7 +8,6 @@ from services import tracing
 from services.chat import generate_chat_title
 from services.llm_client import (
     DEFAULT_LLM_MODEL,
-    DEFAULT_LLM_REASONING_EFFORT,
     DEFAULT_TEMPERATURE,
     DEFAULT_TOP_P,
     DEFAULT_SEED,
@@ -300,7 +299,6 @@ def process_user_prompt(
                     "temperature": DEFAULT_TEMPERATURE,
                     "top_p": DEFAULT_TOP_P,
                     "seed": DEFAULT_SEED,
-                    "reasoning_effort": DEFAULT_LLM_REASONING_EFFORT,
                 },
             },
         )

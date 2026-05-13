@@ -1,21 +1,23 @@
-"""Low-level LLM client utilities for an OpenAI-compatible backend.
+"""Low-level LLM client utilities for a provider-neutral backend.
 
-The runtime defaults to OpenRouter as the example endpoint, but the env
-variable contract is provider-neutral via `LLM_*` names.
+The runtime uses Pydantic AI's `LiteLLMProvider` so any LiteLLM-supported
+backend can be selected via a single `LLM_MODEL` string (e.g.
+`openrouter/google/gemini-3-flash-preview`). LiteLLM is used in-process
+through the provider layer; no LiteLLM Proxy/server is involved.
 """
 
 import logging
 import os
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, TypeVar
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from pydantic_ai import Agent, AgentRunResult
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
-from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers.litellm import LiteLLMProvider
 
 from services import tracing
 
@@ -38,23 +40,12 @@ DEFAULT_TEMPERATURE: float = 0.2
 DEFAULT_TOP_P: float = 0.6
 DEFAULT_SEED: int = 42
 
-DEFAULT_LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1")
+DEFAULT_LLM_BASE_URL = os.getenv("LLM_BASE_URL", "")
 DEFAULT_LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 DEFAULT_LLM_MODEL = os.getenv(
     "LLM_MODEL",
-    "google/gemini-3-flash-preview",
+    "openrouter/google/gemini-3-flash-preview",
 )
-ReasoningEffort = Literal["minimal", "low", "medium", "high"]
-
-
-def _get_reasoning_effort() -> ReasoningEffort:
-    value = os.getenv("LLM_REASONING_EFFORT", "low")
-    if value not in {"minimal", "low", "medium", "high"}:
-        raise ValueError(f"Invalid LLM_REASONING_EFFORT: {value}")
-    return cast(ReasoningEffort, value)
-
-
-DEFAULT_LLM_REASONING_EFFORT = _get_reasoning_effort()
 
 
 @tracing.observe(as_type="generation", name="llm_generation")
@@ -63,24 +54,22 @@ def create(
     temperature: float = DEFAULT_TEMPERATURE,
     top_p: float = DEFAULT_TOP_P,
     seed: int = DEFAULT_SEED,
-    reasoning_effort: ReasoningEffort = DEFAULT_LLM_REASONING_EFFORT,
     system_prompt: str | None = None,
     response_model: type[ModelT] | None = None,
     history: list[ModelMessage] | None = None,
     model: str = DEFAULT_LLM_MODEL,
 ) -> ModelT | SimpleNamespace | Any:
-    """Send a message via the Pydantic AI OpenAI-compatible provider.
+    """Send a message via Pydantic AI's LiteLLM provider.
 
     Args:
         user_prompt: User prompt text.
         temperature: Sampling temperature.
         top_p: Nucleus sampling probability.
         seed: Random seed for reproducibility.
-        reasoning_effort: Reasoning level for backend-specific thinking controls.
         system_prompt: Optional system instruction.
         response_model: Pydantic model for structured output.
         history: Prior conversation messages in Pydantic AI format.
-        model: Model name.
+        model: LiteLLM-style model identifier (e.g. `openrouter/google/gemini-3-flash-preview`).
 
     Returns:
         Parsed Pydantic model, or SimpleNamespace with `.text` for plain text.
@@ -91,7 +80,11 @@ def create(
     resolved_key = DEFAULT_LLM_API_KEY
     if not resolved_key:
         raise ValueError("LLM_API_KEY is required")
-    provider = OpenAIProvider(base_url=DEFAULT_LLM_BASE_URL, api_key=resolved_key)
+
+    provider_kwargs: dict[str, Any] = {"api_key": resolved_key}
+    if DEFAULT_LLM_BASE_URL:
+        provider_kwargs["api_base"] = DEFAULT_LLM_BASE_URL
+    provider = LiteLLMProvider(**provider_kwargs)
     pai_model = OpenAIChatModel(model, provider=provider)
 
     agent: Agent[None, Any] = Agent(
@@ -104,7 +97,6 @@ def create(
         "temperature": temperature,
         "top_p": top_p,
         "seed": seed,
-        "openai_reasoning_effort": reasoning_effort,
     }
 
     run_result = agent.run_sync(
@@ -115,18 +107,18 @@ def create(
 
     output = run_result.output
     logger.info(
-        "llm_response base_url=%s model=%s response_model=%s",
-        DEFAULT_LLM_BASE_URL,
+        "llm_response model=%s base_url=%s response_model=%s",
         model,
+        DEFAULT_LLM_BASE_URL or "<litellm-default>",
         response_model.__name__ if response_model else None,
     )
 
     trace_metadata: dict[str, Any] = {
+        "model": model,
         "base_url": DEFAULT_LLM_BASE_URL,
         "temperature": temperature,
         "top_p": top_p,
         "seed": seed,
-        "reasoning_effort": reasoning_effort,
         "response_model": response_model.__name__ if response_model else None,
     }
     _update_llm_generation(
