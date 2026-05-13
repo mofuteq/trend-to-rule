@@ -23,6 +23,17 @@ class RequestAnalysis(BaseModel):
     is_in_scope: bool
 
 
+class WebSource(BaseModel):
+    source_id: str
+    query_kind: Literal["canonical", "emerging"]
+    title: str
+    url: str
+    snippet: str
+    published_at: str | None = None
+    score: float | None = None
+    provider: Literal["tavily"] = "tavily"
+
+
 class ArticleAttribute(BaseModel):
     vertical: VERTICAL
     language: str

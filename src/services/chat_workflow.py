@@ -17,14 +17,10 @@ from core.models import (
     RequestAnalysis,
     StructuredClaims,
     StructuredDraft,
+    WebSource,
 )
 from core.query_utils import render_example_query
 from core.text_utils import normalize_text_nfkc
-from retrieval.app_retrieval import (
-    points_to_prompt_context,
-    points_to_table_rows,
-    retrieve_vector_results_by_queries,
-)
 from services import tracing
 from services.chat import (
     analyze_request,
@@ -39,6 +35,12 @@ from services.image_search import (
     search_images,
     select_top_k,
 )
+from services.web_search import (
+    dedupe_sources_by_url,
+    search_text_sources,
+    sources_to_prompt_context,
+    sources_to_table_rows,
+)
 
 logger = logging.getLogger(__name__)
 OUT_OF_SCOPE_MESSAGE = (
@@ -47,6 +49,16 @@ OUT_OF_SCOPE_MESSAGE = (
     "reasoning.\n"
     "Please reframe the question in a fashion, styling, outfit, apparel, visual "
     "reference, or trend-related context."
+)
+TAVILY_NOT_CONFIGURED_MESSAGE = (
+    "I cannot run the in-scope evidence workflow because Tavily text retrieval is "
+    "not configured. Set TAVILY_API_KEY and try again; I did not generate an "
+    "evidence-based answer without sources."
+)
+TAVILY_NO_EVIDENCE_MESSAGE = (
+    "I could not retrieve Tavily text evidence for this in-scope request, so I am "
+    "abstaining instead of generating an evidence-based trend rule. Try again "
+    "later or broaden the fashion/style query."
 )
 
 
@@ -78,20 +90,34 @@ def _build_fallback_image_query(request_analysis: RequestAnalysis, rule: str) ->
 
 
 class RetrievalBundle(BaseModel):
-    """Retrieved vector-search outputs used downstream by the chat workflow."""
+    """Retrieved web evidence used downstream by the chat workflow."""
 
     canonical_context: str
     emerging_context: str
+    canonical_sources: list[WebSource] = Field(default_factory=list)
+    emerging_sources: list[WebSource] = Field(default_factory=list)
     canonical_rows: list[dict[str, str]] = Field(default_factory=list)
     emerging_rows: list[dict[str, str]] = Field(default_factory=list)
+    error_message: str = ""
+
+    def has_text_evidence(self) -> bool:
+        """Return True when at least one normalized source is available."""
+        return bool(self.canonical_sources or self.emerging_sources)
+
+    def total_source_count(self) -> int:
+        """Return total normalized source count."""
+        return len(self.canonical_sources) + len(self.emerging_sources)
 
 
-def _empty_retrieval_bundle() -> RetrievalBundle:
+def _empty_retrieval_bundle(error_message: str = "") -> RetrievalBundle:
     return RetrievalBundle(
         canonical_context="",
         emerging_context="",
+        canonical_sources=[],
+        emerging_sources=[],
         canonical_rows=[],
         emerging_rows=[],
+        error_message=error_message,
     )
 
 
@@ -122,23 +148,87 @@ def retrieve_supporting_context(
     Returns:
         RetrievalBundle: Retrieved contexts and table rows for display.
     """
+    if not str(config.tavily_api_key or "").strip():
+        _log_text_retrieval_counts(
+            canonical_source_count=0,
+            emerging_source_count=0,
+            total_source_count=0,
+            reason="missing_tavily_api_key",
+        )
+        return _empty_retrieval_bundle(error_message=TAVILY_NOT_CONFIGURED_MESSAGE)
+
     candidate_queries = request_analysis.candidate_queries
-    retrieved = retrieve_vector_results_by_queries(
-        canonical_query=str(candidate_queries.canonical_query or ""),
-        emerging_query=str(candidate_queries.emerging_query or ""),
-        user_vertical=request_analysis.vertical,
-        vector_candidate_k=config.vector_candidate_k,
-        mmr_diversity=config.vector_mmr_diversity,
-        per_query_top_k=config.vector_per_query_top_k,
+    canonical_query = str(candidate_queries.canonical_query or "")
+    emerging_query = str(candidate_queries.emerging_query or "")
+    canonical_sources = search_text_sources(
+        canonical_query,
+        query_kind="canonical",
+        max_results=config.tavily_text_max_results,
+        api_key=config.tavily_api_key,
+        search_depth=config.tavily_search_depth,
+        include_raw_content=config.tavily_include_raw_content,
     )
-    canonical_points = retrieved.get("canonical", [])
-    emerging_points = retrieved.get("emerging", [])
-    return RetrievalBundle(
-        canonical_context=points_to_prompt_context(canonical_points, label="Canonical"),
-        emerging_context=points_to_prompt_context(emerging_points, label="Emerging"),
-        canonical_rows=points_to_table_rows(canonical_points),
-        emerging_rows=points_to_table_rows(emerging_points),
+    emerging_sources = search_text_sources(
+        emerging_query,
+        query_kind="emerging",
+        max_results=config.tavily_text_max_results,
+        api_key=config.tavily_api_key,
+        search_depth=config.tavily_search_depth,
+        include_raw_content=config.tavily_include_raw_content,
     )
+    canonical_sources, emerging_sources = dedupe_sources_by_url(
+        canonical_sources=canonical_sources,
+        emerging_sources=emerging_sources,
+    )
+    bundle = RetrievalBundle(
+        canonical_context=sources_to_prompt_context(
+            canonical_sources,
+            label="Canonical",
+        ),
+        emerging_context=sources_to_prompt_context(
+            emerging_sources,
+            label="Emerging",
+        ),
+        canonical_sources=canonical_sources,
+        emerging_sources=emerging_sources,
+        canonical_rows=sources_to_table_rows(canonical_sources),
+        emerging_rows=sources_to_table_rows(emerging_sources),
+    )
+    if not bundle.has_text_evidence():
+        bundle.error_message = TAVILY_NO_EVIDENCE_MESSAGE
+    _log_text_retrieval_counts(
+        canonical_source_count=len(canonical_sources),
+        emerging_source_count=len(emerging_sources),
+        total_source_count=bundle.total_source_count(),
+        reason=(bundle.error_message or None),
+    )
+    return bundle
+
+
+def _log_text_retrieval_counts(
+    *,
+    canonical_source_count: int,
+    emerging_source_count: int,
+    total_source_count: int,
+    reason: str | None = None,
+) -> None:
+    logger.info(
+        "text_retrieval_complete backend=tavily canonical_source_count=%s "
+        "emerging_source_count=%s total_source_count=%s reason=%s",
+        canonical_source_count,
+        emerging_source_count,
+        total_source_count,
+        reason or "",
+    )
+    metadata: dict[str, object] = {
+        "text_retrieval_backend": "tavily",
+        "canonical_source_count": canonical_source_count,
+        "emerging_source_count": emerging_source_count,
+        "total_source_count": total_source_count,
+    }
+    if reason:
+        metadata["text_retrieval_reason"] = reason
+    tracing.update_current_trace(metadata=metadata)
 
 
 class AssistantResponseState(BaseModel):
@@ -203,8 +293,31 @@ def _node_retrieve_supporting_context(state: AssistantResponseState) -> dict:
             config=state.config,
         )
     except Exception as err:
-        logger.warning("Vector search failed: %s", err)
+        logger.warning("Tavily text retrieval failed: %s", err)
+        retrieval = _empty_retrieval_bundle(error_message=TAVILY_NO_EVIDENCE_MESSAGE)
+        _log_text_retrieval_counts(
+            canonical_source_count=0,
+            emerging_source_count=0,
+            total_source_count=0,
+            reason="text_retrieval_exception",
+        )
     return {"retrieval": retrieval}
+
+
+def _route_by_evidence(state: AssistantResponseState) -> str:
+    retrieval = state.retrieval or _empty_retrieval_bundle()
+    if retrieval.has_text_evidence():
+        return "has_evidence"
+    return "missing_evidence"
+
+
+def _node_evidence_unavailable_response(state: AssistantResponseState) -> dict:
+    retrieval = state.retrieval or _empty_retrieval_bundle()
+    return {
+        "rule": retrieval.error_message or TAVILY_NO_EVIDENCE_MESSAGE,
+        "image_query": "",
+        "image_results": [],
+    }
 
 
 def _node_extract_claims(state: AssistantResponseState) -> dict:
@@ -303,12 +416,11 @@ def _node_search_images(state: AssistantResponseState) -> dict:
 
 
 def _build_assistant_response_graph_builder() -> StateGraph:
-    """Build a linear-transition state machine for the assistant response.
+    """Build the state machine for the assistant response.
 
-    This graph is intentionally linear and preserves the existing Fixed RAR
-    behavior: every turn runs claims -> draft -> decision support -> query ->
-    image query -> image search in a fixed order. Conditional routing,
-    sufficiency checks, and re-retrieval loops are deliberately out of scope
+    In-scope requests enter the deterministic RAR path after Tavily text
+    evidence is available. Missing evidence routes to a safe abstention rather
+    than claims extraction. Query refinement loops are deliberately out of scope
     here and are planned as future Agentic RAR work on top of this graph.
     """
     graph = StateGraph(AssistantResponseState)
@@ -316,6 +428,7 @@ def _build_assistant_response_graph_builder() -> StateGraph:
     graph.add_node("route_by_scope", _node_route_by_scope)
     graph.add_node("out_of_scope_response", _node_out_of_scope_response)
     graph.add_node("retrieve_supporting_context", _node_retrieve_supporting_context)
+    graph.add_node("evidence_unavailable_response", _node_evidence_unavailable_response)
     graph.add_node("extract_claims", _node_extract_claims)
     graph.add_node("extract_structured_draft", _node_extract_structured_draft)
     graph.add_node("generate_decision_support", _node_generate_decision_support)
@@ -334,7 +447,15 @@ def _build_assistant_response_graph_builder() -> StateGraph:
         },
     )
     graph.add_edge("out_of_scope_response", END)
-    graph.add_edge("retrieve_supporting_context", "extract_claims")
+    graph.add_conditional_edges(
+        "retrieve_supporting_context",
+        _route_by_evidence,
+        {
+            "has_evidence": "extract_claims",
+            "missing_evidence": "evidence_unavailable_response",
+        },
+    )
+    graph.add_edge("evidence_unavailable_response", END)
     graph.add_edge("extract_claims", "extract_structured_draft")
     graph.add_edge("extract_structured_draft", "generate_decision_support")
     graph.add_edge("generate_decision_support", "generate_query")
@@ -425,6 +546,7 @@ def generate_assistant_response(
         "langfuse_session_id": langfuse_session_id,
         "langfuse_user_id": langfuse_user_id,
         "thread_id": resolved_thread_id,
+        "text_retrieval_backend": "tavily",
     }
     metadata = {key: value for key, value in metadata.items() if value is not None}
     invoke_config = {

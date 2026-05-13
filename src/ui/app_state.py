@@ -26,8 +26,6 @@ def init_session_state() -> None:
     st.session_state.setdefault("loaded_chat_id", "")
     st.session_state.setdefault("pending_delete_chat_id", "")
     st.session_state.setdefault("chat_turn", 0)
-    st.session_state.setdefault("vector_searcher", None)
-    st.session_state.setdefault("vector_error", "")
     if not isinstance(st.session_state.chat_id, str):
         st.session_state.chat_id = str(st.session_state.chat_id)
 

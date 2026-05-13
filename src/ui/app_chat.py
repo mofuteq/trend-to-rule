@@ -4,7 +4,6 @@ import streamlit as st
 
 from core.app_config import AppConfig
 from core.text_utils import normalize_text_nfkc
-from retrieval.app_retrieval import build_retrieved_results_html_table
 from services import tracing
 from services.chat import generate_chat_title
 from services.llm_client import (
@@ -19,6 +18,7 @@ from services.chat_workflow import (
     generate_assistant_response,
 )
 from services.image_search import ImageSearchResult
+from services.web_search import build_web_sources_html_table
 from storage.chat_db import ChatDB
 from ui.app_state import (
     add_turn,
@@ -85,24 +85,24 @@ def render_image_results(image_results: list[ImageSearchResult]) -> None:
 
 
 def render_retrieved_results(retrieval: RetrievalBundle) -> None:
-    """Render retrieved canonical and emerging vector search tables.
+    """Render retrieved canonical and emerging web evidence tables.
 
     Args:
-        retrieval: Retrieved vector-search bundle for the current turn.
+        retrieval: Retrieved web evidence bundle for the current turn.
     """
     if not retrieval.canonical_rows and not retrieval.emerging_rows:
         return
-    st.caption("Retrieved vectors used for this answer")
+    st.caption("Web evidence used for this answer")
     if retrieval.canonical_rows:
-        st.caption("Canonical query results")
+        st.caption("Canonical sources")
         st.markdown(
-            build_retrieved_results_html_table(retrieval.canonical_rows),
+            build_web_sources_html_table(retrieval.canonical_rows),
             unsafe_allow_html=True,
         )
     if retrieval.emerging_rows:
-        st.caption("Emerging query results")
+        st.caption("Emerging sources")
         st.markdown(
-            build_retrieved_results_html_table(retrieval.emerging_rows),
+            build_web_sources_html_table(retrieval.emerging_rows),
             unsafe_allow_html=True,
         )
 
@@ -259,8 +259,13 @@ def process_user_prompt(
                     item.model_dump() for item in assistant_response.image_results
                 ],
                 "retrieval": {
-                    "canonical_rows": retrieval.canonical_rows,
-                    "emerging_rows": retrieval.emerging_rows,
+                    "canonical_sources": [
+                        source.model_dump() for source in retrieval.canonical_sources
+                    ],
+                    "emerging_sources": [
+                        source.model_dump() for source in retrieval.emerging_sources
+                    ],
+                    "error_message": retrieval.error_message,
                 },
             },
             tags=[
@@ -278,8 +283,10 @@ def process_user_prompt(
                 "is_in_scope": request_analysis.is_in_scope,
                 "image_query": assistant_response.image_query,
                 "image_result_count": len(assistant_response.image_results),
-                "canonical_hits": len(retrieval.canonical_rows),
-                "emerging_hits": len(retrieval.emerging_rows),
+                "text_retrieval_backend": "tavily",
+                "canonical_source_count": len(retrieval.canonical_sources),
+                "emerging_source_count": len(retrieval.emerging_sources),
+                "total_source_count": retrieval.total_source_count(),
                 "canonical_claim_count": (
                     len(assistant_response.structured_claims.canonical_claims)
                     if assistant_response.structured_claims is not None

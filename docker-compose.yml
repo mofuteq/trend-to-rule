@@ -5,14 +5,11 @@ services:
       dockerfile: src/Dockerfile
     container_name: trend-to-rule-app
     depends_on:
-      qdrant:
-        condition: service_started
       langgraph-postgres:
         condition: service_healthy
     env_file:
       - ./src/.env
     environment:
-      VECTOR_QDRANT_URL: http://qdrant:6333
       LANGGRAPH_POSTGRES_URL: postgresql://postgres:${LANGGRAPH_POSTGRES_PASSWORD:-postgres}@langgraph-postgres:5432/langgraph
     ports:
       - "8501:8501"
@@ -36,13 +33,4 @@ services:
       - "5433:5432"
     volumes:
       - ./.data/langgraph/postgres:/var/lib/postgresql/data
-    restart: unless-stopped
-
-  qdrant:
-    image: qdrant/qdrant:v1.17-unprivileged
-    container_name: trend-to-rule-qdrant
-    ports:
-      - "6333:6333"
-    volumes:
-      - ./.data/qdrant:/qdrant/storage
     restart: unless-stopped

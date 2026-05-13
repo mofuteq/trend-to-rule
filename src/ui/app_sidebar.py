@@ -1,16 +1,9 @@
 from datetime import datetime, timezone
-import inspect
-from pathlib import Path
 
 import streamlit as st
 
 from storage.chat_db import ChatDB
 from ui.app_state import sort_chat_ids_by_last_updated
-
-try:
-    from retrieval.search_vectors import HybridVectorSearcher
-except Exception:
-    HybridVectorSearcher = None  # type: ignore[assignment]
 
 
 def setup_chat_selector(
@@ -48,48 +41,3 @@ def setup_chat_selector(
         ),
     )
     st.session_state.chat_id = str(selected_chat_id)
-
-
-def setup_vector_search_ui(
-    *,
-    vector_collection: str,
-    vector_model_name: str,
-    vector_device: str,
-    vector_qdrant_url: str,
-) -> None:
-    """Initialize vector search lazily (always enabled)."""
-    st.sidebar.divider()
-
-    if HybridVectorSearcher is None:
-        st.session_state.vector_error = "Vector search dependencies are not available."
-        st.sidebar.error(st.session_state.vector_error)
-        return
-
-    needs_reinit = st.session_state.vector_searcher is None
-    if not needs_reinit and st.session_state.vector_searcher is not None:
-        try:
-            signature = inspect.signature(
-                st.session_state.vector_searcher.hybrid_search_with_filter
-            )
-            needs_reinit = "vertical_match_value" not in signature.parameters
-        except (TypeError, ValueError, AttributeError):
-            needs_reinit = True
-
-    if needs_reinit:
-        try:
-            st.session_state.vector_searcher = HybridVectorSearcher(
-                model_name=vector_model_name,
-                device=vector_device,
-                collection=vector_collection,
-                qdrant_url=vector_qdrant_url,
-            )
-            st.session_state.vector_error = ""
-        except Exception as err:
-            st.session_state.vector_error = str(err)
-
-    if st.session_state.vector_error:
-        st.sidebar.error(st.session_state.vector_error)
-    else:
-        st.sidebar.caption(
-            "AI-generated content may contain mistakes. Please verify important details with the original sources."
-        )
