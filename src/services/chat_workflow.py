@@ -31,7 +31,6 @@ from services.chat import (
 )
 from services.image_search import (
     ImageSearchResult,
-    rerank_with_clip,
     search_images,
     select_top_k,
 )
@@ -395,8 +394,7 @@ def _node_search_images(state: AssistantResponseState) -> dict:
             include_image_descriptions=config.tavily_include_image_descriptions,
         )
         raw_candidate_count = len(candidates)
-        reranked = rerank_with_clip(image_query, candidates)
-        image_results = select_top_k(reranked, k=config.tavily_image_limit)
+        image_results = select_top_k(candidates, k=config.tavily_image_limit)
     except Exception as err:
         logger.warning("Tavily image search failed: %s", err)
     final_count = len(image_results)
@@ -409,7 +407,7 @@ def _node_search_images(state: AssistantResponseState) -> dict:
         metadata={
             "visual_search_backend": "tavily",
             "raw_image_candidate_count": raw_candidate_count,
-            "final_reranked_image_count": final_count,
+            "final_image_result_count": final_count,
         }
     )
     return {"image_results": image_results}

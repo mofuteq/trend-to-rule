@@ -64,15 +64,12 @@ Visual retrieval also uses Tavily, but it is downstream of rule generation.
 
 The workflow does not send the final answer directly to image search. It first
 converts the rule into an `ExampleQuerySpec`, renders a compact image query, and
-then requests Tavily image candidates.
+then requests Tavily image candidates. RepoA normalizes those candidates,
+deduplicates image URLs and page/title pairs, and selects the top candidates in
+Tavily-provided order.
 
-Image candidates are reranked locally with a lightweight multilingual CLIP pair:
-
-- `sentence-transformers/clip-ViT-B-32-multilingual-v1` for text queries
-- `sentence-transformers/clip-ViT-B-32` for image candidates
-
-CLIP remains local only for visual reranking. It is not used for text evidence
-retrieval.
+Visual references are optional supporting examples, not the core reasoning
+source. No local embedding model is required for the default runtime.
 
 ## Architecture
 
@@ -93,8 +90,7 @@ flowchart TD
     GDS --> GQ[generate_query]
     GQ --> RIQ[render_image_query]
     RIQ --> SI[Tavily image search]
-    SI --> CLIP[local CLIP rerank]
-    CLIP --> E
+    SI --> E
 
     subgraph Observability
       LF[Langfuse Cloud tracing]
@@ -139,7 +135,8 @@ trend-to-rule/
 - `src/core/`: runtime config, domain models, text/query helpers.
 - `src/services/web_search.py`: Tavily text evidence search and `WebSource`
   normalization.
-- `src/services/image_search.py`: Tavily image search and local CLIP reranking.
+- `src/services/image_search.py`: Tavily image search, candidate normalization,
+  deduplication, and top-candidate selection.
 - `src/services/chat_workflow.py`: LangGraph workflow orchestration.
 - `src/services/chat.py`: LLM-backed request analysis, claim extraction,
   structured draft, decision support, and query generation.
@@ -171,14 +168,6 @@ TAVILY_IMAGE_FETCH_LIMIT=10
 TAVILY_IMAGE_LIMIT=3
 TAVILY_INCLUDE_IMAGE_DESCRIPTIONS=true
 
-CLIP_TEXT_MODEL_NAME=sentence-transformers/clip-ViT-B-32-multilingual-v1
-CLIP_IMAGE_MODEL_NAME=sentence-transformers/clip-ViT-B-32
-
-HF_HOME=.data/huggingface
-HF_HUB_CACHE=.data/huggingface/hub
-TRANSFORMERS_CACHE=.data/huggingface/hub
-SENTENCE_TRANSFORMERS_HOME=.data/huggingface/hub
-
 CHAT_DB_PATH=.data/chat_db
 T2R_DEFAULT_WORKSPACE=demo
 APP_LOG_LEVEL=INFO
@@ -200,8 +189,9 @@ Key settings:
 - `TAVILY_SEARCH_DEPTH`: Tavily search depth. Default: `basic`.
 - `TAVILY_INCLUDE_RAW_CONTENT`: whether Tavily may return raw page content.
   Default: `false`.
-- `TAVILY_IMAGE_FETCH_LIMIT`: raw image candidate count before CLIP reranking.
-- `TAVILY_IMAGE_LIMIT`: final visual reference card count after CLIP reranking.
+- `TAVILY_IMAGE_FETCH_LIMIT`: raw image candidate count requested from Tavily.
+- `TAVILY_IMAGE_LIMIT`: final visual reference card count selected from Tavily
+  results.
 - `TAVILY_INCLUDE_IMAGE_DESCRIPTIONS`: whether Tavily should return image
   descriptions when available.
 - `LANGFUSE_BASE_URL`: defaults to Langfuse Cloud.
