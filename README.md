@@ -172,6 +172,7 @@ for the selected model prefix.
 LLM_MODEL=openrouter/google/gemini-3-flash-preview
 LLM_API_KEY=
 LLM_BASE_URL=
+LLM_REASONING_EFFORT=low
 
 TAVILY_API_KEY=
 TAVILY_TEXT_MAX_RESULTS=5
@@ -202,6 +203,9 @@ Key settings:
 - `LLM_BASE_URL`: optional. When empty, LiteLLM uses its built-in default
   for the model prefix. Set it to override with a custom OpenAI-compatible
   endpoint or an internal gateway.
+- `LLM_REASONING_EFFORT`: controls Pydantic AI's unified `thinking` model
+  setting. One of `minimal`, `low`, `medium`, `high`, `xhigh`. Default:
+  `low`.
 - `TAVILY_API_KEY`: required for in-scope text evidence retrieval and also used
   by visual retrieval.
 - `TAVILY_TEXT_MAX_RESULTS`: per-lane text result cap. Default: `5`.

@@ -10,7 +10,7 @@ import logging
 import os
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar, cast
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -47,6 +47,24 @@ DEFAULT_LLM_MODEL = os.getenv(
     "openrouter/google/gemini-3-flash-preview",
 )
 
+ReasoningEffort = Literal["minimal", "low", "medium", "high", "xhigh"]
+_ALLOWED_REASONING_EFFORTS: frozenset[str] = frozenset(
+    {"minimal", "low", "medium", "high", "xhigh"}
+)
+
+
+def _get_reasoning_effort() -> ReasoningEffort:
+    value = os.getenv("LLM_REASONING_EFFORT", "low")
+    if value not in _ALLOWED_REASONING_EFFORTS:
+        raise ValueError(
+            "Invalid LLM_REASONING_EFFORT="
+            f"{value!r}; expected one of {sorted(_ALLOWED_REASONING_EFFORTS)}"
+        )
+    return cast(ReasoningEffort, value)
+
+
+DEFAULT_LLM_REASONING_EFFORT: ReasoningEffort = _get_reasoning_effort()
+
 
 @tracing.observe(as_type="generation", name="llm_generation")
 def create(
@@ -54,6 +72,7 @@ def create(
     temperature: float = DEFAULT_TEMPERATURE,
     top_p: float = DEFAULT_TOP_P,
     seed: int = DEFAULT_SEED,
+    reasoning_effort: ReasoningEffort = DEFAULT_LLM_REASONING_EFFORT,
     system_prompt: str | None = None,
     response_model: type[ModelT] | None = None,
     history: list[ModelMessage] | None = None,
@@ -66,6 +85,8 @@ def create(
         temperature: Sampling temperature.
         top_p: Nucleus sampling probability.
         seed: Random seed for reproducibility.
+        reasoning_effort: Provider-neutral thinking effort, mapped to
+            Pydantic AI's unified `thinking` model setting.
         system_prompt: Optional system instruction.
         response_model: Pydantic model for structured output.
         history: Prior conversation messages in Pydantic AI format.
@@ -97,6 +118,7 @@ def create(
         "temperature": temperature,
         "top_p": top_p,
         "seed": seed,
+        "thinking": reasoning_effort,
     }
 
     run_result = agent.run_sync(
@@ -119,6 +141,7 @@ def create(
         "temperature": temperature,
         "top_p": top_p,
         "seed": seed,
+        "reasoning_effort": reasoning_effort,
         "response_model": response_model.__name__ if response_model else None,
     }
     _update_llm_generation(
