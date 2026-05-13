@@ -1,5 +1,6 @@
 # trend-to-rule
 
+[![CI](https://github.com/mofuteq/trend-to-rule/actions/workflows/ci.yml/badge.svg)](https://github.com/mofuteq/trend-to-rule/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.13-blue)
 ![LangGraph](https://img.shields.io/badge/orchestration-LangGraph-green)
 ![SQLite](https://img.shields.io/badge/checkpoints-SQLite-blue)
