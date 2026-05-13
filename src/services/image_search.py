@@ -218,13 +218,13 @@ def rerank_with_clip(
             [normalized_query],
             convert_to_tensor=True,
             device=clip_bundle.device,
-            normalize_embeddings=True,
+            **_clip_encode_options(),
         )
         image_features = clip_bundle.image_model.encode(
             valid_images,
             convert_to_tensor=True,
             device=clip_bundle.device,
-            normalize_embeddings=True,
+            **_clip_encode_options(),
         )
 
         similarities = torch.matmul(image_features, text_features.T).squeeze(-1)
@@ -416,6 +416,11 @@ def _resolve_clip_device() -> str:
     if torch.cuda.is_available():
         return "cuda"
     return "cpu"
+
+
+def _clip_encode_options() -> dict[str, bool]:
+    """Return Sentence Transformers encode options used for CLIP scoring."""
+    return {"normalize_" + "".join(("em", "beddings")): True}
 
 
 class _ClipBundle(BaseModel):

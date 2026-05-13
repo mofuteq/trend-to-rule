@@ -248,16 +248,6 @@ Launch the Streamlit app with:
 uv run streamlit run src/app.py
 ```
 
-## Offline Collection Utilities
-
-The repository still includes lightweight RSS/article collection utilities for
-creating local corpora or debugging source quality:
-
-- `src/pipeline/collect_rss.py`
-- `src/pipeline/extract_articles.py`
-
-These utilities are not required for the default search-native runtime.
-
 ## Observability
 
 RepoA uses Langfuse Cloud as the default observability backend for development
