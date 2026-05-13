@@ -160,10 +160,14 @@ uv sync
 
 Create `src/.env` for local runs and Docker Compose `env_file`.
 
+The app talks to an OpenAI-compatible LLM endpoint. OpenRouter is the default
+example endpoint; point `LLM_BASE_URL` at any OpenAI-compatible provider.
+
 ```dotenv
-OPENROUTER_API_KEY=your-openrouter-api-key
-OPENROUTER_MODEL=google/gemini-3-flash-preview
-OPENROUTER_REASONING_EFFORT=low
+LLM_BASE_URL=https://openrouter.ai/api/v1
+LLM_API_KEY=
+LLM_MODEL=google/gemini-3-flash-preview
+LLM_REASONING_EFFORT=low
 
 TAVILY_API_KEY=
 TAVILY_TEXT_MAX_RESULTS=5
@@ -187,7 +191,11 @@ LANGGRAPH_SQLITE_PATH=.data/langgraph/checkpoints.sqlite
 
 Key settings:
 
-- `OPENROUTER_API_KEY`: required for Pydantic AI via OpenRouter.
+- `LLM_BASE_URL`: OpenAI-compatible endpoint. Defaults to OpenRouter
+  (`https://openrouter.ai/api/v1`).
+- `LLM_API_KEY`: required API key for the configured LLM endpoint.
+- `LLM_MODEL`: model identifier passed to the endpoint.
+- `LLM_REASONING_EFFORT`: one of `minimal`, `low`, `medium`, `high`.
 - `TAVILY_API_KEY`: required for in-scope text evidence retrieval and also used
   by visual retrieval.
 - `TAVILY_TEXT_MAX_RESULTS`: per-lane text result cap. Default: `5`.

@@ -1,4 +1,8 @@
-"""Low-level LLM client utilities for the OpenRouter backend."""
+"""Low-level LLM client utilities for an OpenAI-compatible backend.
+
+The runtime defaults to OpenRouter as the example endpoint, but the env
+variable contract is provider-neutral via `LLM_*` names.
+"""
 
 import logging
 import os
@@ -10,8 +14,8 @@ from dotenv import load_dotenv
 from pydantic import BaseModel
 from pydantic_ai import Agent, AgentRunResult
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
-from pydantic_ai.providers.openrouter import OpenRouterProvider
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
+from pydantic_ai.providers.openai import OpenAIProvider
 
 from services import tracing
 
@@ -34,37 +38,38 @@ DEFAULT_TEMPERATURE: float = 0.2
 DEFAULT_TOP_P: float = 0.6
 DEFAULT_SEED: int = 42
 
-DEFAULT_OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-DEFAULT_OPENROUTER_MODEL = os.getenv(
-    "OPENROUTER_MODEL",
+DEFAULT_LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1")
+DEFAULT_LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+DEFAULT_LLM_MODEL = os.getenv(
+    "LLM_MODEL",
     "google/gemini-3-flash-preview",
 )
 ReasoningEffort = Literal["minimal", "low", "medium", "high"]
 
 
 def _get_reasoning_effort() -> ReasoningEffort:
-    value = os.getenv("OPENROUTER_REASONING_EFFORT", "low")
+    value = os.getenv("LLM_REASONING_EFFORT", "low")
     if value not in {"minimal", "low", "medium", "high"}:
-        raise ValueError(f"Invalid OPENROUTER_REASONING_EFFORT: {value}")
+        raise ValueError(f"Invalid LLM_REASONING_EFFORT: {value}")
     return cast(ReasoningEffort, value)
 
 
-DEFAULT_OPENROUTER_REASONING_EFFORT = _get_reasoning_effort()
+DEFAULT_LLM_REASONING_EFFORT = _get_reasoning_effort()
 
 
-@tracing.observe(as_type="generation", name="openrouter_generation")
+@tracing.observe(as_type="generation", name="llm_generation")
 def create(
     user_prompt: str,
     temperature: float = DEFAULT_TEMPERATURE,
     top_p: float = DEFAULT_TOP_P,
     seed: int = DEFAULT_SEED,
-    reasoning_effort: ReasoningEffort = DEFAULT_OPENROUTER_REASONING_EFFORT,
+    reasoning_effort: ReasoningEffort = DEFAULT_LLM_REASONING_EFFORT,
     system_prompt: str | None = None,
     response_model: type[ModelT] | None = None,
     history: list[ModelMessage] | None = None,
-    model: str = DEFAULT_OPENROUTER_MODEL,
+    model: str = DEFAULT_LLM_MODEL,
 ) -> ModelT | SimpleNamespace | Any:
-    """Send a message via the Pydantic AI OpenRouter provider.
+    """Send a message via the Pydantic AI OpenAI-compatible provider.
 
     Args:
         user_prompt: User prompt text.
@@ -83,11 +88,11 @@ def create(
     if not user_prompt:
         raise ValueError("user_prompt is required")
 
-    resolved_key = DEFAULT_OPENROUTER_API_KEY
+    resolved_key = DEFAULT_LLM_API_KEY
     if not resolved_key:
-        raise ValueError("OPENROUTER_API_KEY is required")
-    provider = OpenRouterProvider(api_key=resolved_key)
-    pai_model = OpenRouterModel(model, provider=provider)
+        raise ValueError("LLM_API_KEY is required")
+    provider = OpenAIProvider(base_url=DEFAULT_LLM_BASE_URL, api_key=resolved_key)
+    pai_model = OpenAIChatModel(model, provider=provider)
 
     agent: Agent[None, Any] = Agent(
         model=pai_model,
@@ -95,11 +100,11 @@ def create(
         system_prompt=system_prompt or "",
     )
 
-    model_settings: OpenRouterModelSettings = {
+    model_settings: OpenAIChatModelSettings = {
         "temperature": temperature,
         "top_p": top_p,
         "seed": seed,
-        "openrouter_reasoning": {"effort": reasoning_effort},
+        "openai_reasoning_effort": reasoning_effort,
     }
 
     run_result = agent.run_sync(
@@ -110,20 +115,21 @@ def create(
 
     output = run_result.output
     logger.info(
-        "llm_response backend=openrouter model=%s response_model=%s",
+        "llm_response base_url=%s model=%s response_model=%s",
+        DEFAULT_LLM_BASE_URL,
         model,
         response_model.__name__ if response_model else None,
     )
 
     trace_metadata: dict[str, Any] = {
-        "backend": "openrouter",
+        "base_url": DEFAULT_LLM_BASE_URL,
         "temperature": temperature,
         "top_p": top_p,
         "seed": seed,
         "reasoning_effort": reasoning_effort,
         "response_model": response_model.__name__ if response_model else None,
     }
-    _update_openrouter_generation(
+    _update_llm_generation(
         model=model,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
@@ -137,7 +143,7 @@ def create(
     return SimpleNamespace(text=str(output))
 
 
-def _update_openrouter_generation(
+def _update_llm_generation(
     *,
     model: str,
     system_prompt: str | None,
