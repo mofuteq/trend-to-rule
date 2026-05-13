@@ -43,6 +43,7 @@ class AppConfig:
     tavily_image_fetch_limit: int
     tavily_image_limit: int
     tavily_include_image_descriptions: bool
+    langgraph_sqlite_path: Path
     workspace_query_key: str
     default_workspace_key: str
 
@@ -73,6 +74,12 @@ def load_app_config() -> AppConfig:
         tavily_image_limit=int(os.getenv("TAVILY_IMAGE_LIMIT", "3")),
         tavily_include_image_descriptions=_parse_bool(
             os.getenv("TAVILY_INCLUDE_IMAGE_DESCRIPTIONS", "true")
+        ),
+        langgraph_sqlite_path=resolve_project_path(
+            os.getenv(
+                "LANGGRAPH_SQLITE_PATH",
+                ".data/langgraph/checkpoints.sqlite",
+            )
         ),
         workspace_query_key="workspace",
         default_workspace_key=os.getenv("T2R_DEFAULT_WORKSPACE", "demo"),
