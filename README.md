@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.13-blue)
 ![LangGraph](https://img.shields.io/badge/orchestration-LangGraph-green)
-![Postgres](https://img.shields.io/badge/checkpoints-Postgres-blue)
+![SQLite](https://img.shields.io/badge/checkpoints-SQLite-blue)
 ![Pydantic AI](https://img.shields.io/badge/LLM-Pydantic%20AI-purple)
 ![OpenRouter](https://img.shields.io/badge/provider-OpenRouter-black)
 ![Langfuse](https://img.shields.io/badge/tracing-Langfuse-orange)
@@ -16,6 +16,10 @@ It separates canonical patterns from emerging signals, extracts structured
 claims from normalized web evidence, synthesizes a rule, and optionally attaches
 visual references. The final answer is backed by explicit intermediate
 artifacts rather than hidden model grounding.
+
+LangGraph checkpoints are persisted to local SQLite by default at
+`.data/langgraph/checkpoints.sqlite`, so the default runtime does not require a
+database service.
 
 ## Current Retrieval Backend
 
@@ -101,7 +105,7 @@ flowchart TD
 The LangGraph workflow is implemented in
 [`src/services/chat_workflow.py`](./src/services/chat_workflow.py). It keeps
 request analysis, scope routing, the out-of-scope path, the structured RAR
-stages, visual retrieval, Langfuse tracing, and the Postgres checkpoint backend.
+stages, visual retrieval, Langfuse tracing, and the SQLite checkpoint backend.
 
 In-scope runs log text evidence metadata to Langfuse:
 
@@ -143,7 +147,7 @@ trend-to-rule/
 - `src/prompt_template/`: prompts for each structured stage.
 - `src/storage/`: LMDB-backed chat persistence.
 - `src/ui/`: Streamlit rendering and session state.
-- `docker-compose.yml`: local app plus LangGraph checkpoint Postgres.
+- `docker-compose.yml`: local app runtime.
 
 ## Environment Setup
 
@@ -177,7 +181,7 @@ LANGFUSE_BASE_URL="https://cloud.langfuse.com"
 LANGFUSE_PUBLIC_KEY=
 LANGFUSE_SECRET_KEY=
 
-LANGGRAPH_POSTGRES_URL=postgresql://postgres:postgres@localhost:5433/langgraph
+LANGGRAPH_SQLITE_PATH=.data/langgraph/checkpoints.sqlite
 ```
 
 Key settings:
@@ -197,14 +201,12 @@ Key settings:
 - `LANGFUSE_BASE_URL`: defaults to Langfuse Cloud.
 - `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`: tracing is disabled if either
   key is empty.
-- `LANGGRAPH_POSTGRES_URL`: enables Postgres-backed LangGraph checkpoints.
-
-`LANGGRAPH_POSTGRES_PASSWORD` is optional for Docker Compose and defaults to
-`postgres`. `LANGGRAPH_POSTGRES_POOL_MAX` is optional and defaults to `10`.
+- `LANGGRAPH_SQLITE_PATH`: local SQLite file for LangGraph checkpoints.
+  Default: `.data/langgraph/checkpoints.sqlite`.
 
 ## Run With Docker Compose
 
-Start the Streamlit app and LangGraph checkpoint Postgres:
+Start the Streamlit app:
 
 ```bash
 docker compose up -d
@@ -213,8 +215,6 @@ docker compose up -d
 Services:
 
 - Streamlit app: `http://localhost:8501`
-- LangGraph checkpoint Postgres: `localhost:5433` -> container
-  `langgraph-postgres:5432`
 
 Stop services:
 
@@ -227,8 +227,8 @@ Compose details:
 - The app image is built from [`src/Dockerfile`](./src/Dockerfile).
 - Environment variables are loaded from `src/.env`.
 - Runtime data is mounted from `.data/` into the container at `/app/.data`.
-- LangGraph checkpoints are stored under `.data/langgraph/postgres`.
-- The app waits for `langgraph-postgres` to become healthy before starting.
+- LangGraph checkpoints are stored in `.data/langgraph/checkpoints.sqlite` by
+  default.
 
 ## Run Locally
 

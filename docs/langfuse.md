@@ -38,7 +38,7 @@ show `analyze_request`, `route_by_scope`, and `out_of_scope_response`.
 
 LangGraph runs still pass Langfuse's LangChain callback handler into
 `graph.invoke()` so the in-scope graph view remains visible in Langfuse. This
-does not change the workflow behavior or checkpoint backend.
+does not change the workflow behavior or SQLite checkpoint backend.
 
 ## RepoA identification
 

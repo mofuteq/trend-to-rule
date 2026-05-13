@@ -1,15 +1,14 @@
 """High-level chat workflow orchestration shared by the Streamlit UI."""
 
 import logging
-import os
+import sqlite3
 import threading
 import uuid
 
-from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic_ai.messages import ModelMessage
-from psycopg_pool import ConnectionPool
 
 from core.app_config import AppConfig
 from core.models import (
@@ -466,38 +465,52 @@ def _build_assistant_response_graph_builder() -> StateGraph:
 _ASSISTANT_RESPONSE_GRAPH_BUILDER = _build_assistant_response_graph_builder()
 _GRAPH_LOCK = threading.Lock()
 _COMPILED_GRAPH = None
-_CHECKPOINTER_POOL: ConnectionPool | None = None
+_CHECKPOINTER_CONN: sqlite3.Connection | None = None
 
 
-def _build_checkpointer() -> PostgresSaver | None:
-    """Create a PostgresSaver from ``LANGGRAPH_POSTGRES_URL`` if configured.
+def _build_checkpointer(config: AppConfig) -> SqliteSaver | None:
+    """Create a SQLite checkpointer for the configured local checkpoint path.
 
-    Returns None when the env var is unset so local runs without the postgres
-    container still work; in that case the graph compiles without persistence.
+    Returns None if SQLite setup fails, matching the prior best-effort
+    checkpoint behavior where the graph could run without persistence.
     """
-    global _CHECKPOINTER_POOL
-    url = os.getenv("LANGGRAPH_POSTGRES_URL")
-    if not url:
+    global _CHECKPOINTER_CONN
+    checkpoint_path = config.langgraph_sqlite_path
+    try:
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(
+            checkpoint_path,
+            check_same_thread=False,
+        )
+        _CHECKPOINTER_CONN = conn
+        saver = SqliteSaver(_CHECKPOINTER_CONN)
+        saver.setup()
+        logger.info(
+            "LangGraph checkpoints persisted to SQLite at %s",
+            checkpoint_path,
+        )
+        return saver
+    except Exception:
+        logger.warning(
+            "Failed to initialize LangGraph SQLite checkpointing at %s; "
+            "compiling graph without persistence.",
+            checkpoint_path,
+            exc_info=True,
+        )
+        if _CHECKPOINTER_CONN is not None:
+            _CHECKPOINTER_CONN.close()
+            _CHECKPOINTER_CONN = None
         return None
-    _CHECKPOINTER_POOL = ConnectionPool(
-        conninfo=url,
-        max_size=int(os.getenv("LANGGRAPH_POSTGRES_POOL_MAX", "10")),
-        kwargs={"autocommit": True, "prepare_threshold": 0},
-        open=True,
-    )
-    saver = PostgresSaver(_CHECKPOINTER_POOL)
-    saver.setup()
-    return saver
 
 
-def _get_compiled_graph():
-    """Lazily compile the assistant-response graph with a Postgres checkpointer."""
+def _get_compiled_graph(config: AppConfig):
+    """Lazily compile the assistant-response graph with a SQLite checkpointer."""
     global _COMPILED_GRAPH
     if _COMPILED_GRAPH is not None:
         return _COMPILED_GRAPH
     with _GRAPH_LOCK:
         if _COMPILED_GRAPH is None:
-            checkpointer = _build_checkpointer()
+            checkpointer = _build_checkpointer(config)
             _COMPILED_GRAPH = _ASSISTANT_RESPONSE_GRAPH_BUILDER.compile(
                 checkpointer=checkpointer,
             )
@@ -560,7 +573,10 @@ def generate_assistant_response(
         user_id=langfuse_user_id,
         tags=tags,
     ):
-        final_state = _get_compiled_graph().invoke(initial_state, invoke_config)
+        final_state = _get_compiled_graph(config).invoke(
+            initial_state,
+            invoke_config,
+        )
     return AssistantResponseBundle(
         request_analysis=final_state["request_analysis"],
         retrieval=final_state.get("retrieval") or _empty_retrieval_bundle(),
