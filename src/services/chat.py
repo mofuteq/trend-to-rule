@@ -162,14 +162,14 @@ def extract_claims(
     """
     res = create(
         user_prompt=TEMPLATE_STRUCTURED_CLAIMS
-        .module.system(
-            request_goal=request_goal,
-            now=datetime.now()
-        ),
-        system_prompt=TEMPLATE_STRUCTURED_CLAIMS
         .module.user(
             canonical_context=canonical_context,
             emerging_context=emerging_context
+        ),
+        system_prompt=TEMPLATE_STRUCTURED_CLAIMS
+        .module.system(
+            request_goal=request_goal,
+            now=datetime.now()
         ),
         response_model=StructuredClaims,
     )
