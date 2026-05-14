@@ -116,13 +116,17 @@ def test_create_passes_output_retries_to_agent(monkeypatch):
             }
             return FakeRunResult()
 
-    monkeypatch.setattr(reloaded, "LiteLLMProvider", FakeProvider)
+    monkeypatch.setattr(reloaded, "OpenAIProvider", FakeProvider)
     monkeypatch.setattr(reloaded, "OpenAIChatModel", FakeModel)
     monkeypatch.setattr(reloaded, "Agent", FakeAgent)
 
     result = reloaded.create("hello")
 
     assert result.text == "ok"
+    assert captured["provider_kwargs"] == {
+        "api_key": "test-llm-key",
+        "base_url": "https://openrouter.ai/api/v1",
+    }
     assert captured["agent_kwargs"]["output_retries"] == 4
     assert captured["agent_kwargs"]["output_type"] is str
 

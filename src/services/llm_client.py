@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from pydantic_ai import Agent, AgentRunResult
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
-from pydantic_ai.providers.litellm import LiteLLMProvider
+from pydantic_ai.providers.openai import OpenAIProvider
 
 from services import tracing
 
@@ -97,7 +97,7 @@ def create(
     history: list[ModelMessage] | None = None,
     model: str = DEFAULT_LLM_MODEL,
 ) -> ModelT | SimpleNamespace | Any:
-    """Send a message via Pydantic AI's LiteLLM provider.
+    """Send a message via Pydantic AI's OpenAI-compatible provider.
 
     Args:
         user_prompt: User prompt text.
@@ -123,8 +123,8 @@ def create(
 
     provider_kwargs: dict[str, Any] = {"api_key": resolved_key}
     if DEFAULT_LLM_BASE_URL:
-        provider_kwargs["api_base"] = DEFAULT_LLM_BASE_URL
-    provider = LiteLLMProvider(**provider_kwargs)
+        provider_kwargs["base_url"] = DEFAULT_LLM_BASE_URL
+    provider = OpenAIProvider(**provider_kwargs)
     pai_model = OpenAIChatModel(model, provider=provider)
 
     agent: Agent[None, Any] = Agent(
@@ -151,7 +151,7 @@ def create(
     logger.info(
         "llm_response model=%s base_url=%s response_model=%s",
         model,
-        DEFAULT_LLM_BASE_URL or "<litellm-default>",
+        DEFAULT_LLM_BASE_URL or "<openai-default>",
         response_model.__name__ if response_model else None,
     )
 
