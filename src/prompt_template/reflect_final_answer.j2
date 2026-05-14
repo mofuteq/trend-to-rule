@@ -16,8 +16,8 @@ Rubric meanings:
 - lends_reference_frame: The answer frames interpretation and decision support without presenting a verdict.
 - avoids_prescription: The answer does not tell the user what to do and avoids recommendation language.
 - avoids_user_judgment: The answer does not judge the user's taste, intent, body, budget, identity, or decision.
-- includes_interpreted_rules: The answer contains a compact "Interpreted Rules" section near the end.
-- rules_are_observation_grounded: Interpreted Rules use conditional observation form: "When [observable condition], it may signal [interpretation]."
+- includes_interpreted_rules: The answer contains a compact `Interpreted Rules` section near the end. In Japanese output, `解釈ルール` is the expected localized heading. The section must be explicit, not merely implied.
+- rules_are_observation_grounded: Interpreted Rules use conditional observation form. English: "When [observable condition], it may signal [interpretation]." Japanese: "[観測可能な条件] が見られるとき、[解釈] を示す可能性がある。"
 - hides_intermediate_structure: The answer does not expose canonical, emerging, common_rule, conflicts, gaps, or other schema names as visible sections.
 - flows_as_continuous_prose: The main explanation is continuous prose, not a table, outline, or category breakdown.
 - avoids_listicle_style: The answer avoids numbered section headers, category lists, and listicle-style closings except for the compact Interpreted Rules section.
