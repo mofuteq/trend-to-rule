@@ -160,18 +160,20 @@ uv sync
 
 Create `src/.env` for local runs and Docker Compose `env_file`.
 
-The app uses Pydantic AI with `LiteLLMProvider`. LiteLLM runs in-process
-through Pydantic AI's provider layer; no LiteLLM Proxy or extra server is
-required. The default `LLM_MODEL` uses the LiteLLM `openrouter/...` prefix,
-so OpenRouter is the default example provider out of the box. Set
-`LLM_BASE_URL` to point at a custom OpenAI-compatible endpoint or an
-internal gateway; leave it empty to let LiteLLM use its built-in default
-for the selected model prefix.
+The app uses Pydantic AI with an OpenAI-compatible provider client. OpenRouter
+is the default example provider, so set all three LLM fields together:
+`LLM_MODEL`, `LLM_API_KEY`, and `LLM_BASE_URL`.
+
+For OpenRouter, use the model id from OpenRouter, such as
+`google/gemini-3-flash-preview` or
+`nvidia/nemotron-3-super-120b-a12b:free`, and set
+`LLM_BASE_URL=https://openrouter.ai/api/v1`. Do not include the LiteLLM-style
+`openrouter/` prefix when using the OpenRouter base URL directly.
 
 ```dotenv
-LLM_MODEL=openrouter/google/gemini-3-flash-preview
+LLM_MODEL=google/gemini-3-flash-preview
 LLM_API_KEY=
-LLM_BASE_URL=
+LLM_BASE_URL=https://openrouter.ai/api/v1
 LLM_REASONING_EFFORT=low
 
 TAVILY_API_KEY=
@@ -196,13 +198,13 @@ LANGGRAPH_SQLITE_PATH=.data/langgraph/checkpoints.sqlite
 
 Key settings:
 
-- `LLM_MODEL`: LiteLLM-style model identifier, e.g.
-  `openrouter/google/gemini-3-flash-preview`. The provider prefix selects
-  the upstream backend.
+- `LLM_MODEL`: model identifier for the configured OpenAI-compatible endpoint,
+  e.g. `google/gemini-3-flash-preview` or
+  `nvidia/nemotron-3-super-120b-a12b:free` for OpenRouter.
 - `LLM_API_KEY`: required API key for the selected backend.
-- `LLM_BASE_URL`: optional. When empty, LiteLLM uses its built-in default
-  for the model prefix. Set it to override with a custom OpenAI-compatible
-  endpoint or an internal gateway.
+- `LLM_BASE_URL`: required for OpenRouter and any non-OpenAI backend that
+  exposes an OpenAI-compatible API. Use `https://openrouter.ai/api/v1` for
+  OpenRouter.
 - `LLM_REASONING_EFFORT`: controls Pydantic AI's unified `thinking` model
   setting. One of `minimal`, `low`, `medium`, `high`, `xhigh`. Default:
   `low`.

@@ -19,7 +19,7 @@ def test_default_constants_reflect_llm_env(monkeypatch):
     assert reloaded.DEFAULT_LLM_REASONING_EFFORT == "high"
 
 
-def test_default_model_falls_back_to_openrouter_prefix(monkeypatch):
+def test_default_model_falls_back_to_openrouter_endpoint(monkeypatch):
     monkeypatch.delenv("LLM_MODEL", raising=False)
     monkeypatch.delenv("LLM_BASE_URL", raising=False)
     monkeypatch.delenv("LLM_REASONING_EFFORT", raising=False)
@@ -28,8 +28,8 @@ def test_default_model_falls_back_to_openrouter_prefix(monkeypatch):
 
     reloaded = importlib.reload(llm_client)
 
-    assert reloaded.DEFAULT_LLM_MODEL == "openrouter/google/gemini-3-flash-preview"
-    assert reloaded.DEFAULT_LLM_BASE_URL == ""
+    assert reloaded.DEFAULT_LLM_MODEL == "google/gemini-3-flash-preview"
+    assert reloaded.DEFAULT_LLM_BASE_URL == "https://openrouter.ai/api/v1"
     assert reloaded.DEFAULT_LLM_REASONING_EFFORT == "low"
 
 

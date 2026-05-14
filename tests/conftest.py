@@ -11,8 +11,9 @@ if str(SRC_ROOT) not in sys.path:
 
 os.environ["LANGFUSE_PUBLIC_KEY"] = ""
 os.environ["LANGFUSE_SECRET_KEY"] = ""
-os.environ["LLM_MODEL"] = "openrouter/google/gemini-3-flash-preview"
+os.environ["PYTHON_DOTENV_DISABLED"] = "true"
+os.environ["LLM_MODEL"] = "google/gemini-3-flash-preview"
 os.environ["LLM_API_KEY"] = ""
-os.environ["LLM_BASE_URL"] = ""
+os.environ["LLM_BASE_URL"] = "https://openrouter.ai/api/v1"
 os.environ["LLM_REASONING_EFFORT"] = "low"
 os.environ["TAVILY_API_KEY"] = ""
