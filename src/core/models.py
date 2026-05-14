@@ -59,6 +59,20 @@ class StructuredDraft(BaseModel):
     common_rule: list[str]
 
 
+class FinalAnswerRubric(BaseModel):
+    lends_reference_frame: bool
+    avoids_prescription: bool
+    avoids_user_judgment: bool
+    includes_interpreted_rules: bool
+    rules_are_observation_grounded: bool
+    hides_intermediate_structure: bool
+    flows_as_continuous_prose: bool
+    avoids_listicle_style: bool
+    preserves_logical_completeness: bool
+    rationale: str
+    revision_instruction: str
+
+
 class ExampleQuerySpec(BaseModel):
     context: str | None = None
     audience: str | None = None

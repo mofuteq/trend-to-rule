@@ -39,10 +39,15 @@ TEMPLATE_DECISION_SUPPORT = get_j2_template(
     searchpath=TEMPLATE_SEARCH_PATH,
     name="generate_decision_support.j2",
 )
+TEMPLATE_FINAL_ANSWER_REFLECTION = get_j2_template(
+    searchpath=TEMPLATE_SEARCH_PATH,
+    name="reflect_final_answer.j2",
+)
 
 __all__ = [
     "TEMPLATE_CHAT_TITLE",
     "TEMPLATE_DECISION_SUPPORT",
+    "TEMPLATE_FINAL_ANSWER_REFLECTION",
     "TEMPLATE_IMAGE_QUERY",
     "TEMPLATE_INFER_ARTICLE",
     "TEMPLATE_SEARCH_QUERY",

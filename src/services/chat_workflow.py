@@ -13,6 +13,7 @@ from pydantic_ai.messages import ModelMessage
 from core.app_config import AppConfig
 from core.models import (
     ExampleQuerySpec,
+    FinalAnswerRubric,
     RequestAnalysis,
     StructuredClaims,
     StructuredDraft,
@@ -27,6 +28,7 @@ from services.chat import (
     extract_structured_draft,
     generate_decision_support,
     generate_query,
+    reflect_on_final_answer,
 )
 from services.image_search import (
     ImageSearchResult,
@@ -58,6 +60,18 @@ TAVILY_NO_EVIDENCE_MESSAGE = (
     "abstaining instead of generating an evidence-based trend rule. Try again "
     "later or broaden the fashion/style query."
 )
+MAX_FINAL_ANSWER_REGENERATION_ATTEMPTS = 1
+FINAL_ANSWER_RUBRIC_BOOLEAN_FIELDS = (
+    "lends_reference_frame",
+    "avoids_prescription",
+    "avoids_user_judgment",
+    "includes_interpreted_rules",
+    "rules_are_observation_grounded",
+    "hides_intermediate_structure",
+    "flows_as_continuous_prose",
+    "avoids_listicle_style",
+    "preserves_logical_completeness",
+)
 
 
 def _build_fallback_image_query(request_analysis: RequestAnalysis, rule: str) -> str:
@@ -85,6 +99,36 @@ def _build_fallback_image_query(request_analysis: RequestAnalysis, rule: str) ->
         rule_hint = " ".join(rule_hint.split())
         return f"{prefix} {rule_hint}"
     return prefix
+
+
+def _failed_final_answer_rubric_criteria(
+    reflection: FinalAnswerRubric | None,
+) -> list[str]:
+    """Return rubric boolean field names that failed."""
+    if reflection is None:
+        return list(FINAL_ANSWER_RUBRIC_BOOLEAN_FIELDS)
+    return [
+        field_name
+        for field_name in FINAL_ANSWER_RUBRIC_BOOLEAN_FIELDS
+        if not bool(getattr(reflection, field_name))
+    ]
+
+
+def _final_answer_reflection_passes(
+    reflection: FinalAnswerRubric | None,
+) -> bool:
+    """Compute final-answer reflection pass/fail from rubric booleans."""
+    return reflection is not None and not _failed_final_answer_rubric_criteria(
+        reflection
+    )
+
+
+def _compact_metadata_text(value: str | None, *, limit: int = 320) -> str:
+    """Keep tracing metadata short enough to scan in Langfuse."""
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 3]}..."
 
 
 class RetrievalBundle(BaseModel):
@@ -127,6 +171,11 @@ class AssistantResponseBundle(BaseModel):
     structured_claims: StructuredClaims | None = None
     structured_draft: StructuredDraft | None = None
     rule: str
+    final_answer_reflection: FinalAnswerRubric | None = None
+    final_answer_reflection_passed: bool | None = None
+    final_answer_reflection_failed_criteria: list[str] = Field(default_factory=list)
+    final_answer_reflection_attempt_count: int = 0
+    final_answer_reflection_failure_reason: str | None = None
     image_query: str = ""
     image_results: list[ImageSearchResult] = Field(default_factory=list)
 
@@ -250,6 +299,10 @@ class AssistantResponseState(BaseModel):
     structured_claims: StructuredClaims | None = None
     structured_draft: StructuredDraft | None = None
     rule: str | None = None
+    final_answer_reflection: FinalAnswerRubric | None = None
+    final_answer_reflection_passed: bool | None = None
+    final_answer_reflection_attempt_count: int = 0
+    final_answer_reflection_failure_reason: str | None = None
     query_spec: ExampleQuerySpec | None = None
     image_query: str | None = None
     image_results: list[ImageSearchResult] = Field(default_factory=list)
@@ -337,15 +390,82 @@ def _node_extract_structured_draft(state: AssistantResponseState) -> dict:
 
 
 def _node_generate_decision_support(state: AssistantResponseState) -> dict:
+    is_regeneration = state.final_answer_reflection_passed is False
+    failed_criteria: list[str] | None = None
+    reflection_rationale: str | None = None
+    revision_instruction: str | None = None
+    next_attempt_count = state.final_answer_reflection_attempt_count
+    if is_regeneration:
+        failed_criteria = _failed_final_answer_rubric_criteria(
+            state.final_answer_reflection
+        )
+        reflection_rationale = (
+            state.final_answer_reflection.rationale
+            if state.final_answer_reflection is not None
+            else state.final_answer_reflection_failure_reason
+        )
+        revision_instruction = (
+            state.final_answer_reflection.revision_instruction
+            if state.final_answer_reflection is not None
+            else None
+        )
+        next_attempt_count += 1
+
     decision_support = generate_decision_support(
         user_prompt=state.user_prompt,
         request_goal=state.request_analysis.request_goal,
         last_request_goal=state.last_request_goal,
         history=state.history,
         structured_draft=state.structured_draft,
+        failed_criteria=failed_criteria,
+        reflection_rationale=reflection_rationale,
+        revision_instruction=revision_instruction,
     )
     rule = normalize_text_nfkc(decision_support or "")
-    return {"rule": rule}
+    return {
+        "rule": rule,
+        "final_answer_reflection_attempt_count": next_attempt_count,
+    }
+
+
+def _node_reflect_on_final_answer(state: AssistantResponseState) -> dict:
+    reflection = reflect_on_final_answer(
+        user_prompt=state.user_prompt,
+        request_goal=state.request_analysis.request_goal,
+        structured_draft=state.structured_draft,
+        final_answer=state.rule or "",
+    )
+    passed = _final_answer_reflection_passes(reflection)
+    failed_criteria = _failed_final_answer_rubric_criteria(reflection)
+    failure_reason = "" if passed else _compact_metadata_text(reflection.rationale)
+    tracing.update_current_trace(
+        metadata={
+            "final_answer_reflection_passed": passed,
+            "final_answer_reflection_failed_criteria": failed_criteria,
+            "final_answer_reflection_attempt_count": (
+                state.final_answer_reflection_attempt_count
+            ),
+            "final_answer_reflection_revision_instruction": (
+                _compact_metadata_text(reflection.revision_instruction)
+            ),
+        }
+    )
+    return {
+        "final_answer_reflection": reflection,
+        "final_answer_reflection_passed": passed,
+        "final_answer_reflection_failure_reason": failure_reason,
+    }
+
+
+def _route_after_final_answer_reflection(state: AssistantResponseState) -> str:
+    if state.final_answer_reflection_passed:
+        return "passed"
+    if (
+        state.final_answer_reflection_attempt_count
+        < MAX_FINAL_ANSWER_REGENERATION_ATTEMPTS
+    ):
+        return "regenerate"
+    return "continue_with_best_available"
 
 
 def _node_generate_query(state: AssistantResponseState) -> dict:
@@ -429,6 +549,7 @@ def _build_assistant_response_graph_builder() -> StateGraph:
     graph.add_node("extract_claims", _node_extract_claims)
     graph.add_node("extract_structured_draft", _node_extract_structured_draft)
     graph.add_node("generate_decision_support", _node_generate_decision_support)
+    graph.add_node("reflect_on_final_answer", _node_reflect_on_final_answer)
     graph.add_node("generate_query", _node_generate_query)
     graph.add_node("render_image_query", _node_render_image_query)
     graph.add_node("search_images", _node_search_images)
@@ -455,7 +576,16 @@ def _build_assistant_response_graph_builder() -> StateGraph:
     graph.add_edge("evidence_unavailable_response", END)
     graph.add_edge("extract_claims", "extract_structured_draft")
     graph.add_edge("extract_structured_draft", "generate_decision_support")
-    graph.add_edge("generate_decision_support", "generate_query")
+    graph.add_edge("generate_decision_support", "reflect_on_final_answer")
+    graph.add_conditional_edges(
+        "reflect_on_final_answer",
+        _route_after_final_answer_reflection,
+        {
+            "passed": "generate_query",
+            "regenerate": "generate_decision_support",
+            "continue_with_best_available": "generate_query",
+        },
+    )
     graph.add_edge("generate_query", "render_image_query")
     graph.add_edge("render_image_query", "search_images")
     graph.add_edge("search_images", END)
@@ -583,6 +713,22 @@ def generate_assistant_response(
         structured_claims=final_state.get("structured_claims"),
         structured_draft=final_state.get("structured_draft"),
         rule=final_state.get("rule") or "",
+        final_answer_reflection=final_state.get("final_answer_reflection"),
+        final_answer_reflection_passed=final_state.get(
+            "final_answer_reflection_passed"
+        ),
+        final_answer_reflection_failed_criteria=_failed_final_answer_rubric_criteria(
+            final_state.get("final_answer_reflection")
+        )
+        if final_state.get("final_answer_reflection") is not None
+        else [],
+        final_answer_reflection_attempt_count=final_state.get(
+            "final_answer_reflection_attempt_count"
+        )
+        or 0,
+        final_answer_reflection_failure_reason=final_state.get(
+            "final_answer_reflection_failure_reason"
+        ),
         image_query=final_state.get("image_query") or "",
         image_results=final_state.get("image_results") or [],
     )

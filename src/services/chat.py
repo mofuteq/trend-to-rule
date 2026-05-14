@@ -9,6 +9,7 @@ from core.models import (
     RequestAnalysis,
     RequestGoal,
     ArticleAttribute,
+    FinalAnswerRubric,
     StructuredDraft,
     SearchQuery,
     StructuredClaims,
@@ -20,6 +21,7 @@ from services.llm_client import create
 from services.prompt_service import (
     TEMPLATE_CHAT_TITLE,
     TEMPLATE_DECISION_SUPPORT,
+    TEMPLATE_FINAL_ANSWER_REFLECTION,
     TEMPLATE_IMAGE_QUERY,
     TEMPLATE_INFER_ARTICLE,
     TEMPLATE_REQUEST_ANALYSIS,
@@ -178,6 +180,7 @@ __all__ = [
     "analyze_request",
     "extract_claims",
     "extract_structured_draft",
+    "reflect_on_final_answer",
     "generate_chat_title",
     "generate_decision_support",
     "generate_query",
@@ -232,6 +235,9 @@ def generate_decision_support(
     structured_draft: StructuredDraft,
     history: list[ModelMessage] | None = None,
     last_request_goal: str | None = None,
+    failed_criteria: list[str] | None = None,
+    reflection_rationale: str | None = None,
+    revision_instruction: str | None = None,
 ) -> str:
     """Generate decision-support output from the structured draft.
 
@@ -241,6 +247,9 @@ def generate_decision_support(
         structured_draft (StructuredDraft): Structured draft generated from retrieval context.
         history (list[ModelMessage] | None): Prior chat history to preserve conversational context.
         last_request_goal (str | None): Previous inferred request goal.
+        failed_criteria (list[str] | None): Rubric criteria that failed a prior reflection.
+        reflection_rationale (str | None): Compact reflection explanation from the prior attempt.
+        revision_instruction (str | None): Direct instruction for revising the final answer.
 
     Returns:
         str: Decision-support result returned by the model.
@@ -255,11 +264,50 @@ def generate_decision_support(
         .module.system(
             request_goal=request_goal,
             last_request_goal=last_request_goal,
-            now=datetime.now()
+            now=datetime.now(),
+            failed_criteria=failed_criteria,
+            reflection_rationale=reflection_rationale,
+            revision_instruction=revision_instruction,
         ),
         history=history,
     )
     return res.text
+
+
+@tracing.observe(name="reflect_on_final_answer")
+def reflect_on_final_answer(
+    user_prompt: str,
+    request_goal: str,
+    structured_draft: StructuredDraft,
+    final_answer: str,
+) -> FinalAnswerRubric:
+    """Evaluate the final answer against the thesis-as-output rubric.
+
+    Args:
+        user_prompt (str): Original user prompt.
+        request_goal (str): Current inferred request goal.
+        structured_draft (StructuredDraft): Structured draft used to generate the final answer.
+        final_answer (str): Generated final answer text to evaluate.
+
+    Returns:
+        FinalAnswerRubric: Structured reflection rubric without an LLM-owned pass/fail field.
+    """
+    res = create(
+        user_prompt=TEMPLATE_FINAL_ANSWER_REFLECTION
+        .module.user(
+            user_prompt=user_prompt,
+            structured_draft=structured_draft.model_dump_json(),
+            final_answer=final_answer,
+        ),
+        system_prompt=TEMPLATE_FINAL_ANSWER_REFLECTION
+        .module.system(
+            request_goal=request_goal,
+            now=datetime.now(),
+        ),
+        response_model=FinalAnswerRubric,
+        reasoning_effort="medium",
+    )
+    return res
 
 
 @tracing.observe(name="generate_query")
