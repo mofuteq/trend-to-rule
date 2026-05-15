@@ -159,7 +159,6 @@ Tavily text search.
 
 ```text
 trend-to-rule/
-├── docker-compose.yml
 ├── src/
 │   ├── app.py
 │   ├── Dockerfile
@@ -185,7 +184,6 @@ trend-to-rule/
 - `src/prompt_template/`: prompts for each structured stage.
 - `src/storage/`: LMDB-backed chat persistence.
 - `src/ui/`: Streamlit rendering and session state.
-- `docker-compose.yml`: local app runtime.
 
 ## Environment Setup
 
@@ -195,7 +193,7 @@ Install dependencies with:
 uv sync
 ```
 
-Create `src/.env` for local runs and Docker Compose `env_file`.
+Create `src/.env` for local and Docker runs.
 
 The app uses Pydantic AI with OpenRouter-specific provider/model classes at the
 LLM boundary. The workflow architecture remains provider-independent, but the
@@ -262,39 +260,33 @@ Key settings:
 - `LANGGRAPH_SQLITE_PATH`: local SQLite file for LangGraph checkpoints.
   Default: `.data/langgraph/checkpoints.sqlite`.
 
-## Run With Docker Compose
-
-Start the Streamlit app:
-
-```bash
-docker compose up -d
-```
-
-Services:
-
-- Streamlit app: `http://localhost:8501`
-
-Stop services:
-
-```bash
-docker compose down
-```
-
-Compose details:
-
-- The app image is built from [`src/Dockerfile`](./src/Dockerfile).
-- Environment variables are loaded from `src/.env`.
-- Runtime data is mounted from `.data/` into the container at `/app/.data`.
-- LangGraph checkpoints are stored in `.data/langgraph/checkpoints.sqlite` by
-  default.
-
 ## Run Locally
 
-Launch the Streamlit app with:
+Launch the Streamlit app with uv:
 
 ```bash
 uv run streamlit run src/app.py
 ```
+
+## Run With Docker
+
+Build the standalone app image:
+
+```bash
+docker build -f src/Dockerfile -t trend-to-rule .
+```
+
+Run the Streamlit app:
+
+```bash
+docker run --rm \
+  --env-file src/.env \
+  -p 8501:8501 \
+  -v "$(pwd)/.data:/app/.data" \
+  trend-to-rule
+```
+
+The app is available at `http://localhost:8501`.
 
 ## Observability
 
