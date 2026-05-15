@@ -39,6 +39,7 @@ DEFAULT_TEMPERATURE: float = 0.2
 DEFAULT_TOP_P: float = 0.6
 DEFAULT_SEED: int = 42
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+DEFAULT_OUTPUT_RETRIES = 3
 
 DEFAULT_LLM_BASE_URL = os.getenv("LLM_BASE_URL", DEFAULT_OPENROUTER_BASE_URL)
 DEFAULT_LLM_API_KEY = os.getenv("LLM_API_KEY", "")
@@ -64,6 +65,24 @@ def _get_reasoning_effort() -> ReasoningEffort:
 
 
 DEFAULT_LLM_REASONING_EFFORT: ReasoningEffort = _get_reasoning_effort()
+
+
+def _get_output_retries() -> int:
+    value = os.getenv("LLM_OUTPUT_RETRIES", str(DEFAULT_OUTPUT_RETRIES))
+    try:
+        retries = int(value)
+    except ValueError as err:
+        raise ValueError(
+            f"Invalid LLM_OUTPUT_RETRIES={value!r}; expected an integer >= 1"
+        ) from err
+    if retries < 1:
+        raise ValueError(
+            f"Invalid LLM_OUTPUT_RETRIES={value!r}; expected an integer >= 1"
+        )
+    return retries
+
+
+DEFAULT_LLM_OUTPUT_RETRIES: int = _get_output_retries()
 
 
 @tracing.observe(as_type="generation", name="llm_generation")
@@ -112,6 +131,7 @@ def create(
         model=pai_model,
         output_type=response_model or str,
         system_prompt=system_prompt or "",
+        output_retries=DEFAULT_LLM_OUTPUT_RETRIES,
     )
 
     model_settings: OpenAIChatModelSettings = {
@@ -142,6 +162,7 @@ def create(
         "top_p": top_p,
         "seed": seed,
         "reasoning_effort": reasoning_effort,
+        "output_retries": DEFAULT_LLM_OUTPUT_RETRIES,
         "response_model": response_model.__name__ if response_model else None,
     }
     _update_llm_generation(

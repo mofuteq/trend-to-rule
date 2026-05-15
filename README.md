@@ -174,6 +174,7 @@ For OpenRouter, use the model id from OpenRouter, such as
 LLM_MODEL=google/gemini-3-flash-preview
 LLM_API_KEY=
 LLM_BASE_URL=https://openrouter.ai/api/v1
+LLM_OUTPUT_RETRIES=3
 LLM_REASONING_EFFORT=low
 
 TAVILY_API_KEY=
@@ -205,6 +206,8 @@ Key settings:
 - `LLM_BASE_URL`: required for OpenRouter and any non-OpenAI backend that
   exposes an OpenAI-compatible API. Use `https://openrouter.ai/api/v1` for
   OpenRouter.
+- `LLM_OUTPUT_RETRIES`: maximum structured-output validation retries before
+  Pydantic AI raises a model-behavior error. Default: `3`.
 - `LLM_REASONING_EFFORT`: controls Pydantic AI's unified `thinking` model
   setting. One of `minimal`, `low`, `medium`, `high`, `xhigh`. Default:
   `low`.
