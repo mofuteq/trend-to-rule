@@ -37,7 +37,13 @@ A claim is a single interpretable statement about:
 # Output Requirements
 - Extract at most 12 canonical claims and at most 6 emerging claims.
 - Answer in English.
-- If evidence items have IDs (e.g., [C01], [E03]), append them at the end of each claim like "... [C01]".
+- Return `canonical_claims` and `emerging_claims` as lists of claim objects, not lists of strings.
+- Each claim object must contain exactly these fields:
+  - `claim`: a self-contained, concise English claim without a bracketed source ID.
+  - `claim_type`: one of `observation`, `interpretation`, `norm`, `signal`.
+  - `source_id`: the evidence item ID only, such as `C01` or `E03`.
+- If evidence items have IDs (e.g., [C01], [E03]), preserve the ID in `source_id` instead of appending it to `claim`.
+- Do not append source IDs inside `claim`; put source IDs only in `source_id`.
 
 {% endmacro %}
 
