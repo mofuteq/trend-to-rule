@@ -7,12 +7,12 @@ from core.text_utils import normalize_text_nfkc
 from services import tracing
 from services.chat import generate_chat_title
 from services.llm_client import (
-    DEFAULT_LLM_MODEL,
-    DEFAULT_LLM_OUTPUT_RETRIES,
-    DEFAULT_LLM_REASONING_EFFORT,
+    DEFAULT_OPENROUTER_MODEL,
+    DEFAULT_OPENROUTER_OUTPUT_RETRIES,
+    DEFAULT_OPENROUTER_REASONING_EFFORT,
+    DEFAULT_SEED,
     DEFAULT_TEMPERATURE,
     DEFAULT_TOP_P,
-    DEFAULT_SEED,
 )
 from services.chat_workflow import (
     RetrievalBundle,
@@ -326,12 +326,12 @@ def process_user_prompt(
                     else 0
                 ),
                 "model_params": {
-                    "model": DEFAULT_LLM_MODEL,
+                    "model": DEFAULT_OPENROUTER_MODEL,
                     "temperature": DEFAULT_TEMPERATURE,
                     "top_p": DEFAULT_TOP_P,
                     "seed": DEFAULT_SEED,
-                    "output_retries": DEFAULT_LLM_OUTPUT_RETRIES,
-                    "reasoning_effort": DEFAULT_LLM_REASONING_EFFORT,
+                    "output_retries": DEFAULT_OPENROUTER_OUTPUT_RETRIES,
+                    "reasoning_effort": DEFAULT_OPENROUTER_REASONING_EFFORT,
                 },
             },
         )
