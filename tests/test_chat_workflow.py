@@ -12,7 +12,10 @@ from core.models import (
     StructuredDraft,
     WebSource,
 )
-from services.prompt_service import TEMPLATE_DECISION_SUPPORT
+from services.prompt_service import (
+    TEMPLATE_DECISION_SUPPORT,
+    TEMPLATE_FINAL_ANSWER_REFLECTION,
+)
 from services import chat_workflow as workflow
 
 
@@ -338,9 +341,24 @@ def test_final_answer_prompt_contains_thesis_constraints():
     assert "reference frame" in normalized
     assert "recommendation" in normalized
     assert "interpreted rules" in normalized
+    assert "解釈ルール" in prompt
     assert "continuous prose" in normalized
     assert "internal reasoning substrate" in normalized
     assert "do not expose the schema shape" in normalized
+
+
+def test_final_answer_reflection_prompt_contains_localized_rules_constraints():
+    prompt = TEMPLATE_FINAL_ANSWER_REFLECTION.module.system(
+        request_goal="compare denim silhouettes",
+        now="2026-05-14",
+    )
+    normalized = prompt.lower()
+
+    assert "interpreted rules" in normalized
+    assert "解釈ルール" in prompt
+    assert "explicit, not merely implied" in normalized
+    assert "when [observable condition], it may signal [interpretation]" in normalized
+    assert "[観測可能な条件] が見られるとき、[解釈] を示す可能性がある" in prompt
 
 
 def test_missing_evidence_routes_to_evidence_unavailable_response(
