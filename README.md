@@ -160,22 +160,19 @@ uv sync
 
 Create `src/.env` for local runs and Docker Compose `env_file`.
 
-The app uses Pydantic AI with an OpenAI-compatible provider client. OpenRouter
-is the default example provider, so set all three LLM fields together:
-`LLM_MODEL`, `LLM_API_KEY`, and `LLM_BASE_URL`.
+The app is intentionally OpenRouter-only. It uses Pydantic AI's
+`OpenRouterProvider` and `OpenRouterModel`, so configure OpenRouter model and
+key settings directly.
 
-For OpenRouter, use the model id from OpenRouter, such as
-`google/gemini-3-flash-preview` or
-`nvidia/nemotron-3-super-120b-a12b:free`, and set
-`LLM_BASE_URL=https://openrouter.ai/api/v1`. Do not include the LiteLLM-style
-`openrouter/` prefix when using the OpenRouter base URL directly.
+Use the model id from OpenRouter, such as `google/gemini-3-flash-preview` or
+`nvidia/nemotron-3-super-120b-a12b:free`. Do not include an `openrouter/`
+provider prefix.
 
 ```dotenv
-LLM_MODEL=google/gemini-3-flash-preview
-LLM_API_KEY=
-LLM_BASE_URL=https://openrouter.ai/api/v1
-LLM_OUTPUT_RETRIES=3
-LLM_REASONING_EFFORT=low
+OPENROUTER_MODEL=google/gemini-3-flash-preview
+OPENROUTER_API_KEY=
+OPENROUTER_OUTPUT_RETRIES=3
+OPENROUTER_REASONING_EFFORT=low
 
 TAVILY_API_KEY=
 TAVILY_TEXT_MAX_RESULTS=5
@@ -199,18 +196,15 @@ LANGGRAPH_SQLITE_PATH=.data/langgraph/checkpoints.sqlite
 
 Key settings:
 
-- `LLM_MODEL`: model identifier for the configured OpenAI-compatible endpoint,
-  e.g. `google/gemini-3-flash-preview` or
+- `OPENROUTER_MODEL`: OpenRouter model identifier, e.g.
+  `google/gemini-3-flash-preview` or
   `nvidia/nemotron-3-super-120b-a12b:free` for OpenRouter.
-- `LLM_API_KEY`: required API key for the selected backend.
-- `LLM_BASE_URL`: required for OpenRouter and any non-OpenAI backend that
-  exposes an OpenAI-compatible API. Use `https://openrouter.ai/api/v1` for
-  OpenRouter.
-- `LLM_OUTPUT_RETRIES`: maximum structured-output validation retries before
-  Pydantic AI raises a model-behavior error. Default: `3`.
-- `LLM_REASONING_EFFORT`: controls Pydantic AI's unified `thinking` model
-  setting. One of `minimal`, `low`, `medium`, `high`, `xhigh`. Default:
-  `low`.
+- `OPENROUTER_API_KEY`: required OpenRouter API key.
+- `OPENROUTER_OUTPUT_RETRIES`: maximum structured-output validation retries
+  before Pydantic AI raises a model-behavior error. Default: `3`.
+- `OPENROUTER_REASONING_EFFORT`: controls OpenRouter reasoning effort through
+  Pydantic AI's `openrouter_reasoning` setting. One of `minimal`, `low`,
+  `medium`, `high`, `xhigh`. Default: `low`.
 - `TAVILY_API_KEY`: required for in-scope text evidence retrieval and also used
   by visual retrieval.
 - `TAVILY_TEXT_MAX_RESULTS`: per-lane text result cap. Default: `5`.
