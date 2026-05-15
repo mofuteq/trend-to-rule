@@ -193,7 +193,7 @@ Install dependencies with:
 uv sync
 ```
 
-Create `src/.env` for local runs.
+Create `src/.env` for local and Docker runs.
 
 The app uses Pydantic AI with OpenRouter-specific provider/model classes at the
 LLM boundary. The workflow architecture remains provider-independent, but the
@@ -267,6 +267,26 @@ Launch the Streamlit app with uv:
 ```bash
 uv run streamlit run src/app.py
 ```
+
+## Run With Docker
+
+Build the standalone app image:
+
+```bash
+docker build -f src/Dockerfile -t trend-to-rule .
+```
+
+Run the Streamlit app:
+
+```bash
+docker run --rm \
+  --env-file src/.env \
+  -p 8501:8501 \
+  -v "$(pwd)/.data:/app/.data" \
+  trend-to-rule
+```
+
+The app is available at `http://localhost:8501`.
 
 ## Observability
 
