@@ -10,17 +10,54 @@
 ![Tavily](https://img.shields.io/badge/search-Tavily-teal)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
-`trend-to-rule` is a search-native Agentic RAR runtime for turning noisy fashion
-and styling trend narratives into inspectable rules.
+`trend-to-rule` is a search-native Agentic RAR runtime for turning noisy trend
+narratives into decision-grade rules.
 
-It separates canonical patterns from emerging signals, extracts structured
-claims from normalized web evidence, synthesizes a rule, and optionally attaches
-visual references. The final answer is backed by explicit intermediate
-artifacts rather than hidden model grounding.
+In fast-moving domains, signals often split into two layers: the **canonical** —
+patterns that hold across cycles — and the **emerging** — what is loud right now.
+Most systems surface one side or the other. `trend-to-rule` retrieves both,
+compares them, and extracts their shared structure as an inspectable rule for a
+human decision-maker.
+
+The system is not a recommender, not a forecaster, and not a styling AI. It does
+not tell the user what to wear, buy, publish, or believe. It returns structured
+decision-support artifacts: typed sources, extracted claims, common rules,
+conflicts, gaps, tradeoffs, and visual references.
+
+Fashion and styling are the current evaluation domain because the
+canonical/emerging structure is unusually visible there. The architecture is
+domain-agnostic: the same pattern applies wherever short-term signals can
+obscure long-term structure, such as product strategy, content selection, or
+capital allocation.
+
+**RAR** means **Retrieval Augmented Reasoning**: retrieval is treated as part of
+the reasoning workflow rather than passive context lookup.
+
+**Search-native** means the system uses live web search as its primary evidence
+source, not a prebuilt corpus, local vector database, or fine-tuned model
+knowledge.
 
 LangGraph checkpoints are persisted to local SQLite by default at
 `.data/langgraph/checkpoints.sqlite`, so the default runtime does not require a
 database service.
+
+## Output Boundary
+
+`trend-to-rule` returns frames, not verdicts.
+
+The final answer is written as continuous prose, but it is generated from
+structured intermediate artifacts. The system reasons through claims, canonical
+and emerging evidence, conflicts, gaps, tradeoffs, and common rules, then renders
+without exposing that internal schema as the user-facing answer.
+
+Every final answer must include an `Interpreted Rules` section, localized as
+`解釈ルール` for Japanese output. Those rules use observation-grounded language:
+
+> When an observable condition appears, it may signal an underlying
+> interpretation.
+
+The system should not collapse evidence into a recommendation. The human remains
+the decision-maker; the agent lends a reference frame and then stops.
 
 ## Current Retrieval Backend
 
@@ -160,13 +197,16 @@ uv sync
 
 Create `src/.env` for local runs and Docker Compose `env_file`.
 
-The app is intentionally OpenRouter-only. It uses Pydantic AI's
-`OpenRouterProvider` and `OpenRouterModel`, so configure OpenRouter model and
-key settings directly.
+The app uses Pydantic AI with OpenRouter-specific provider/model classes at the
+LLM boundary. The workflow architecture remains provider-independent, but the
+runtime does not treat OpenAI-compatible APIs as the architectural contract.
+
+Set the OpenRouter fields together: `OPENROUTER_MODEL`, `OPENROUTER_API_KEY`,
+`OPENROUTER_OUTPUT_RETRIES`, and `OPENROUTER_REASONING_EFFORT`.
 
 Use the model id from OpenRouter, such as `google/gemini-3-flash-preview` or
-`nvidia/nemotron-3-super-120b-a12b:free`. Do not include an `openrouter/`
-provider prefix.
+`nvidia/nemotron-3-super-120b-a12b:free`. Do not include the LiteLLM-style
+`openrouter/` prefix.
 
 ```dotenv
 OPENROUTER_MODEL=google/gemini-3-flash-preview
@@ -198,13 +238,13 @@ Key settings:
 
 - `OPENROUTER_MODEL`: OpenRouter model identifier, e.g.
   `google/gemini-3-flash-preview` or
-  `nvidia/nemotron-3-super-120b-a12b:free` for OpenRouter.
+  `nvidia/nemotron-3-super-120b-a12b:free`.
 - `OPENROUTER_API_KEY`: required OpenRouter API key.
 - `OPENROUTER_OUTPUT_RETRIES`: maximum structured-output validation retries
   before Pydantic AI raises a model-behavior error. Default: `3`.
-- `OPENROUTER_REASONING_EFFORT`: controls OpenRouter reasoning effort through
-  Pydantic AI's `openrouter_reasoning` setting. One of `minimal`, `low`,
-  `medium`, `high`, `xhigh`. Default: `low`.
+- `OPENROUTER_REASONING_EFFORT`: OpenRouter reasoning effort passed through
+  `openrouter_reasoning`. One of `minimal`, `low`, `medium`, `high`, `xhigh`.
+  Default: `low`.
 - `TAVILY_API_KEY`: required for in-scope text evidence retrieval and also used
   by visual retrieval.
 - `TAVILY_TEXT_MAX_RESULTS`: per-lane text result cap. Default: `5`.
@@ -270,7 +310,8 @@ Out-of-scope requests show `analyze_request`, `route_by_scope`, and
 `out_of_scope_response`.
 
 LLM calls in `src/services/llm_client.py` are recorded as generation spans with
-model name, input messages, output, token usage, and sampling config.
+backend, model name, input messages, output, token usage, sampling config,
+reasoning effort, and structured-output retry metadata.
 
 See [docs/langfuse.md](./docs/langfuse.md) for the current observability setup.
 
