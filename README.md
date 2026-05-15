@@ -106,7 +106,7 @@ Visual retrieval also uses Tavily, but it is downstream of rule generation.
 
 The workflow does not send the final answer directly to image search. It first
 converts the rule into an `ExampleQuerySpec`, renders a compact image query, and
-then requests Tavily image candidates. RepoA normalizes those candidates,
+then requests Tavily image candidates. The pipeline normalizes those candidates,
 deduplicates image URLs and page/title pairs, and selects the top candidates in
 Tavily-provided order.
 
@@ -298,7 +298,7 @@ uv run streamlit run src/app.py
 
 ## Observability
 
-RepoA uses Langfuse Cloud as the default observability backend for development
+`trend-to-rule` uses Langfuse Cloud as the default observability backend for development
 and OSS demos. Set `LANGFUSE_BASE_URL="https://cloud.langfuse.com"` with a
 Langfuse Cloud public/secret key pair in `src/.env`; tracing activates
 automatically when both keys are present.
