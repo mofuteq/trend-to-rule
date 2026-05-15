@@ -1,9 +1,8 @@
-"""Low-level LLM client utilities for a provider-neutral backend.
+"""Low-level LLM client utilities for an OpenAI-compatible backend.
 
-The runtime uses Pydantic AI's `LiteLLMProvider` so any LiteLLM-supported
-backend can be selected via a single `LLM_MODEL` string (e.g.
-`openrouter/google/gemini-3-flash-preview`). LiteLLM is used in-process
-through the provider layer; no LiteLLM Proxy/server is involved.
+The runtime uses Pydantic AI's provider interface with an OpenAI-compatible
+client. OpenRouter is the default example endpoint, but `LLM_BASE_URL` can
+point at any compatible gateway.
 """
 
 import logging
@@ -39,12 +38,13 @@ for env_path in ENV_CANDIDATES:
 DEFAULT_TEMPERATURE: float = 0.2
 DEFAULT_TOP_P: float = 0.6
 DEFAULT_SEED: int = 42
+DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-DEFAULT_LLM_BASE_URL = os.getenv("LLM_BASE_URL", "")
+DEFAULT_LLM_BASE_URL = os.getenv("LLM_BASE_URL", DEFAULT_OPENROUTER_BASE_URL)
 DEFAULT_LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 DEFAULT_LLM_MODEL = os.getenv(
     "LLM_MODEL",
-    "openrouter/google/gemini-3-flash-preview",
+    "google/gemini-3-flash-preview",
 )
 
 ReasoningEffort = Literal["minimal", "low", "medium", "high", "xhigh"]
@@ -90,7 +90,7 @@ def create(
         system_prompt: Optional system instruction.
         response_model: Pydantic model for structured output.
         history: Prior conversation messages in Pydantic AI format.
-        model: LiteLLM-style model identifier (e.g. `openrouter/google/gemini-3-flash-preview`).
+        model: Model identifier for the configured OpenAI-compatible endpoint.
 
     Returns:
         Parsed Pydantic model, or SimpleNamespace with `.text` for plain text.

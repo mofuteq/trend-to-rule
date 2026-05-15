@@ -253,6 +253,23 @@ def process_user_prompt(
                     else None
                 ),
                 "image_query": assistant_response.image_query,
+                "final_answer_reflection": (
+                    assistant_response.final_answer_reflection.model_dump()
+                    if assistant_response.final_answer_reflection is not None
+                    else None
+                ),
+                "final_answer_reflection_passed": (
+                    assistant_response.final_answer_reflection_passed
+                ),
+                "final_answer_reflection_failed_criteria": (
+                    assistant_response.final_answer_reflection_failed_criteria
+                ),
+                "final_answer_reflection_attempt_count": (
+                    assistant_response.final_answer_reflection_attempt_count
+                ),
+                "final_answer_reflection_failure_reason": (
+                    assistant_response.final_answer_reflection_failure_reason
+                ),
                 "image_results": [
                     item.model_dump() for item in assistant_response.image_results
                 ],
@@ -281,6 +298,18 @@ def process_user_prompt(
                 "is_in_scope": request_analysis.is_in_scope,
                 "image_query": assistant_response.image_query,
                 "image_result_count": len(assistant_response.image_results),
+                "final_answer_reflection_passed": (
+                    assistant_response.final_answer_reflection_passed
+                ),
+                "final_answer_reflection_failed_criteria": (
+                    assistant_response.final_answer_reflection_failed_criteria
+                ),
+                "final_answer_reflection_attempt_count": (
+                    assistant_response.final_answer_reflection_attempt_count
+                ),
+                "final_answer_reflection_failure_reason": (
+                    assistant_response.final_answer_reflection_failure_reason
+                ),
                 "text_retrieval_backend": "tavily",
                 "canonical_source_count": len(retrieval.canonical_sources),
                 "emerging_source_count": len(retrieval.emerging_sources),
