@@ -106,8 +106,8 @@ def main() -> None:
     st.sidebar.divider()
     st.sidebar.caption("Evidence retrieval: Tavily web search")
     st.sidebar.caption(
-        "AI-generated content may contain mistakes. Please verify important "
-        "details with the original sources."
+        "Patterns, not persuasion. This agent organizes signals without steering "
+        "your decision."
     )
     load_active_chat(
         chat_db=chat_db,
