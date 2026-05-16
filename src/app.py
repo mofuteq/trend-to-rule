@@ -116,8 +116,6 @@ def main() -> None:
     )
     render_history()
     render_chat_input(
-        chat_db=chat_db,
-        user_chat_ids=user_chat_ids,
         user_id=user_id,
         config=CONFIG,
     )

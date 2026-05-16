@@ -46,6 +46,7 @@ class AppConfig:
     langgraph_sqlite_path: Path
     workspace_query_key: str
     default_workspace_key: str
+    api_base_url: str
 
 
 def load_app_config() -> AppConfig:
@@ -83,6 +84,7 @@ def load_app_config() -> AppConfig:
         ),
         workspace_query_key="workspace",
         default_workspace_key=os.getenv("T2R_DEFAULT_WORKSPACE", "demo"),
+        api_base_url=os.getenv("T2R_API_BASE_URL", "http://localhost:8000").strip(),
     )
 
 
