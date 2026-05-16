@@ -276,6 +276,16 @@ Launch the Streamlit app with uv:
 uv run streamlit run src/app.py
 ```
 
+Streamlit remains the main UI for chat session rendering and user interaction.
+The FastAPI app is currently a minimal API boundary around the same LangGraph
+chat workflow.
+
+Launch the FastAPI app locally with uvicorn:
+
+```bash
+uv run uvicorn src.api:app --reload --host 0.0.0.0 --port 8000
+```
+
 ## Run With Docker
 
 Build the standalone app image:
