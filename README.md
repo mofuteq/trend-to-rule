@@ -24,11 +24,19 @@ not tell the user what to wear, buy, publish, or believe. It returns structured
 decision-support artifacts: typed sources, extracted claims, common rules,
 conflicts, gaps, tradeoffs, and visual references.
 
-Fashion and styling are the current evaluation domain because the
-canonical/emerging structure is unusually visible there. The architecture is
-domain-agnostic: the same pattern applies wherever short-term signals can
-obscure long-term structure, such as product strategy, content selection, or
-capital allocation.
+Fashion and styling are the current evaluation domain — not because the system
+has any commitment to fashion as a subject, but because taste is a domain where
+many people have judgments they cannot fully articulate. The gap between “this
+looks right” and “I can explain why” is unusually visible in fashion, which makes
+it a useful place to test whether an agent can lend articulation without taking
+over the judgment.
+
+The architecture is domain-agnostic. Wherever short-term signals can obscure
+long-term structure — product strategy, content selection, capital allocation,
+or other taste-driven domains — the same pattern applies.
+
+See [`examples/sample-output.md`](./examples/sample-output.md) for a full run on
+a fashion query.
 
 **RAR** means **Retrieval Augmented Reasoning**: retrieval is treated as part of
 the reasoning workflow rather than passive context lookup.
