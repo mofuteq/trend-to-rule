@@ -129,6 +129,27 @@ def ensure_user_chat_id(
     return user_chat_ids
 
 
+def remove_user_chat_id(
+    *,
+    user_id: str,
+    chat_id: str,
+    chat_db: ChatDB,
+    user_db_name: str,
+) -> list[str]:
+    """Remove a chat id from the workspace chat list."""
+    user_chat_ids = [
+        existing_chat_id
+        for existing_chat_id in load_user_chat_ids(
+            user_id=user_id,
+            chat_db=chat_db,
+            user_db_name=user_db_name,
+        )
+        if existing_chat_id != chat_id
+    ]
+    chat_db.put(key=user_id, value=user_chat_ids, db_name=user_db_name)
+    return user_chat_ids
+
+
 def sort_chat_ids_by_last_updated(
     chat_ids: list[str],
     chat_db: ChatDB,
@@ -155,6 +176,38 @@ def sort_chat_ids_by_last_updated(
         reverse=True,
     )
     return sorted_chat_ids, updated_at_by_chat, title_by_chat
+
+
+def list_chat_summaries(
+    *,
+    user_id: str,
+    chat_db: ChatDB,
+    user_db_name: str,
+    chat_meta_db_name: str,
+) -> list[dict[str, object]]:
+    """Return sidebar-ready chat summaries for one workspace."""
+    chat_ids = load_user_chat_ids(
+        user_id=user_id,
+        chat_db=chat_db,
+        user_db_name=user_db_name,
+    )
+    sorted_chat_ids, updated_at_by_chat, title_by_chat = sort_chat_ids_by_last_updated(
+        chat_ids=chat_ids,
+        chat_db=chat_db,
+        chat_meta_db_name=chat_meta_db_name,
+    )
+    return [
+        {
+            "chat_id": chat_id,
+            "title": title_by_chat.get(chat_id, ""),
+            "updated_at_ts": (
+                updated_at_by_chat[chat_id]
+                if updated_at_by_chat.get(chat_id, 0.0) > 0
+                else None
+            ),
+        }
+        for chat_id in sorted_chat_ids
+    ]
 
 
 def get_chat_meta(chat_id: str, chat_db: ChatDB, chat_meta_db_name: str) -> dict:
@@ -244,6 +297,74 @@ def load_chat_session(
     )
 
 
+def initialize_chat_session(
+    *,
+    user_id: str,
+    chat_id: str,
+    chat_db: ChatDB,
+    chat_db_name: str,
+    user_db_name: str,
+    chat_meta_db_name: str,
+) -> LoadedChatSession:
+    """Create backend metadata for a chat if missing and attach it to a workspace."""
+    ensure_user_chat_id(
+        user_id=user_id,
+        chat_id=chat_id,
+        chat_db=chat_db,
+        user_db_name=user_db_name,
+    )
+    messages = load_chat_messages(
+        chat_id=chat_id,
+        chat_db=chat_db,
+        chat_db_name=chat_db_name,
+    )
+    meta = get_chat_meta(
+        chat_id=chat_id,
+        chat_db=chat_db,
+        chat_meta_db_name=chat_meta_db_name,
+    )
+    if not meta:
+        update_chat_meta(
+            chat_id=chat_id,
+            chat_db=chat_db,
+            chat_meta_db_name=chat_meta_db_name,
+            updates={
+                "title": "",
+                "chat_turn": max(
+                    0,
+                    _get_next_chat_turn(messages=messages, meta={}) - 1,
+                ),
+                "last_request_goal": "",
+            },
+        )
+    return load_chat_session(
+        chat_id=chat_id,
+        chat_db=chat_db,
+        chat_db_name=chat_db_name,
+        chat_meta_db_name=chat_meta_db_name,
+    )
+
+
+def delete_chat_session(
+    *,
+    user_id: str,
+    chat_id: str,
+    chat_db: ChatDB,
+    chat_db_name: str,
+    user_db_name: str,
+    chat_meta_db_name: str,
+) -> list[str]:
+    """Delete one chat and detach it from a workspace."""
+    chat_db.delete(chat_id, chat_db_name)
+    chat_db.delete(chat_id, chat_meta_db_name)
+    return remove_user_chat_id(
+        user_id=user_id,
+        chat_id=chat_id,
+        chat_db=chat_db,
+        user_db_name=user_db_name,
+    )
+
+
 def append_chat_turn(
     *,
     chat_id: str,
@@ -298,4 +419,3 @@ def _get_next_chat_turn(
         return stored_turn + 1
     completed_user_turns = sum(1 for message in messages if message["role"] == "user")
     return completed_user_turns + 1
-

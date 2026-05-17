@@ -3,6 +3,7 @@
 import logging
 from pathlib import Path
 import sys
+import uuid
 
 from fastapi import FastAPI
 from pydantic_ai.messages import ModelMessage
@@ -13,12 +14,24 @@ if str(SRC_ROOT) not in sys.path:
 
 from core.app_config import load_app_config  # noqa: E402
 from services import tracing  # noqa: E402
-from services.api_models import ChatRequest, ChatResponse  # noqa: E402
+from services.api_models import (  # noqa: E402
+    ChatRequest,
+    ChatResponse,
+    ChatSessionResponse,
+    CreateChatRequest,
+    CreateChatResponse,
+    DeleteChatResponse,
+    ListChatsResponse,
+)
 from services.chat import generate_chat_title  # noqa: E402
 from services.chat_runtime import ChatTurnResult, run_chat_turn  # noqa: E402
 from services.chat_session import (  # noqa: E402
+    LoadedChatSession,
     append_chat_turn,
+    delete_chat_session,
     ensure_user_chat_id,
+    initialize_chat_session,
+    list_chat_summaries,
     load_chat_session,
     open_chat_db,
     set_chat_title,
@@ -45,6 +58,91 @@ def get_api_chat_db() -> ChatDB:
 def health() -> dict[str, str]:
     """Return API health status."""
     return {"status": "ok"}
+
+
+@app.get("/chats", response_model=ListChatsResponse)
+def list_chats(workspace_id: str | None = None) -> ListChatsResponse:
+    """Return stored chats for a workspace."""
+    resolved_workspace_id = workspace_id or CONFIG.default_workspace_key
+    chat_db = get_api_chat_db()
+    return ListChatsResponse(
+        workspace_id=resolved_workspace_id,
+        chats=list_chat_summaries(
+            user_id=resolved_workspace_id,
+            chat_db=chat_db,
+            user_db_name=CONFIG.user_db_name,
+            chat_meta_db_name=CONFIG.chat_meta_db_name,
+        ),
+    )
+
+
+@app.post("/chats", response_model=CreateChatResponse)
+def create_chat(request: CreateChatRequest) -> CreateChatResponse:
+    """Create or initialize an empty chat for a workspace."""
+    chat_id = request.chat_id or str(uuid.uuid4())
+    chat_db = get_api_chat_db()
+    session = initialize_chat_session(
+        user_id=request.workspace_id,
+        chat_id=chat_id,
+        chat_db=chat_db,
+        chat_db_name=CONFIG.chat_db_name,
+        user_db_name=CONFIG.user_db_name,
+        chat_meta_db_name=CONFIG.chat_meta_db_name,
+    )
+    return _chat_session_response(
+        chat_id=chat_id,
+        workspace_id=request.workspace_id,
+        session=session,
+    )
+
+
+@app.get("/chats/{chat_id}", response_model=ChatSessionResponse)
+def get_chat(
+    chat_id: str,
+    workspace_id: str | None = None,
+) -> ChatSessionResponse:
+    """Return one stored chat session."""
+    resolved_workspace_id = workspace_id or CONFIG.default_workspace_key
+    session = load_chat_session(
+        chat_id=chat_id,
+        chat_db=get_api_chat_db(),
+        chat_db_name=CONFIG.chat_db_name,
+        chat_meta_db_name=CONFIG.chat_meta_db_name,
+    )
+    return _chat_session_response(
+        chat_id=chat_id,
+        workspace_id=resolved_workspace_id,
+        session=session,
+    )
+
+
+@app.delete("/chats/{chat_id}", response_model=DeleteChatResponse)
+def delete_chat(
+    chat_id: str,
+    workspace_id: str | None = None,
+) -> DeleteChatResponse:
+    """Delete one chat and remove it from the workspace chat list."""
+    resolved_workspace_id = workspace_id or CONFIG.default_workspace_key
+    chat_db = get_api_chat_db()
+    remaining_chat_ids = delete_chat_session(
+        user_id=resolved_workspace_id,
+        chat_id=chat_id,
+        chat_db=chat_db,
+        chat_db_name=CONFIG.chat_db_name,
+        user_db_name=CONFIG.user_db_name,
+        chat_meta_db_name=CONFIG.chat_meta_db_name,
+    )
+    return DeleteChatResponse(
+        deleted_chat_id=chat_id,
+        workspace_id=resolved_workspace_id,
+        remaining_chat_ids=remaining_chat_ids,
+        chats=list_chat_summaries(
+            user_id=resolved_workspace_id,
+            chat_db=chat_db,
+            user_db_name=CONFIG.user_db_name,
+            chat_meta_db_name=CONFIG.chat_meta_db_name,
+        ),
+    )
 
 
 @tracing.observe(name="chat_turn")
@@ -152,3 +250,19 @@ def _ensure_chat_title(
             chat_meta_db_name=CONFIG.chat_meta_db_name,
         )
     return title
+
+
+def _chat_session_response(
+    *,
+    chat_id: str,
+    workspace_id: str,
+    session: LoadedChatSession,
+) -> ChatSessionResponse:
+    return ChatSessionResponse(
+        chat_id=chat_id,
+        workspace_id=workspace_id,
+        messages=session.messages,
+        title=str(session.meta.get("title") or ""),
+        last_request_goal=session.last_request_goal,
+        chat_turn=max(0, session.next_chat_turn - 1),
+    )

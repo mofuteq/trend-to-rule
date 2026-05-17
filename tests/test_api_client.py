@@ -25,15 +25,186 @@ def _make_config(tmp_path: Path) -> AppConfig:
     )
 
 
+class FakeResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self.payload
+
+
+def _install_fake_client(monkeypatch, calls, payloads):
+    class FakeClient:
+        def __init__(self, *, base_url, timeout):
+            calls.append({"base_url": base_url, "timeout": timeout})
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, path, *, params):
+            calls.append({"method": "GET", "path": path, "params": params})
+            return FakeResponse(payloads[("GET", path)])
+
+        def post(self, path, *, json):
+            calls.append({"method": "POST", "path": path, "json": json})
+            return FakeResponse(payloads[("POST", path)])
+
+        def delete(self, path, *, params):
+            calls.append({"method": "DELETE", "path": path, "params": params})
+            return FakeResponse(payloads[("DELETE", path)])
+
+    monkeypatch.setattr(api_client.httpx, "Client", FakeClient)
+
+
+def test_list_chats_parses_response(monkeypatch, tmp_path):
+    calls = []
+    _install_fake_client(
+        monkeypatch,
+        calls,
+        {
+            ("GET", "/chats"): {
+                "workspace_id": "workspace-a",
+                "chats": [
+                    {
+                        "chat_id": "chat-1",
+                        "title": "Chat one",
+                        "updated_at_ts": 10.0,
+                    }
+                ],
+            }
+        },
+    )
+
+    response = api_client.list_chats(
+        workspace_id="workspace-a",
+        config=_make_config(tmp_path),
+    )
+
+    assert response.workspace_id == "workspace-a"
+    assert response.chats[0].chat_id == "chat-1"
+    assert response.chats[0].title == "Chat one"
+    assert calls[-1] == {
+        "method": "GET",
+        "path": "/chats",
+        "params": {"workspace_id": "workspace-a"},
+    }
+
+
+def test_get_chat_parses_response(monkeypatch, tmp_path):
+    calls = []
+    _install_fake_client(
+        monkeypatch,
+        calls,
+        {
+            ("GET", "/chats/chat-1"): {
+                "chat_id": "chat-1",
+                "workspace_id": "workspace-a",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "title": "Chat one",
+                "last_request_goal": "goal",
+                "chat_turn": 1,
+            }
+        },
+    )
+
+    response = api_client.get_chat(
+        chat_id="chat-1",
+        workspace_id="workspace-a",
+        config=_make_config(tmp_path),
+    )
+
+    assert response.chat_id == "chat-1"
+    assert response.messages[0].content == "Hello"
+    assert response.last_request_goal == "goal"
+    assert calls[-1] == {
+        "method": "GET",
+        "path": "/chats/chat-1",
+        "params": {"workspace_id": "workspace-a"},
+    }
+
+
+def test_create_chat_parses_response(monkeypatch, tmp_path):
+    calls = []
+    _install_fake_client(
+        monkeypatch,
+        calls,
+        {
+            ("POST", "/chats"): {
+                "chat_id": "chat-1",
+                "workspace_id": "workspace-a",
+                "messages": [],
+                "title": "",
+                "last_request_goal": "",
+                "chat_turn": 0,
+            }
+        },
+    )
+
+    response = api_client.create_chat(
+        chat_id="chat-1",
+        workspace_id="workspace-a",
+        config=_make_config(tmp_path),
+    )
+
+    assert response.chat_id == "chat-1"
+    assert response.messages == []
+    assert calls[-1] == {
+        "method": "POST",
+        "path": "/chats",
+        "json": {"workspace_id": "workspace-a", "chat_id": "chat-1"},
+    }
+
+
+def test_delete_chat_parses_response(monkeypatch, tmp_path):
+    calls = []
+    _install_fake_client(
+        monkeypatch,
+        calls,
+        {
+            ("DELETE", "/chats/chat-1"): {
+                "deleted_chat_id": "chat-1",
+                "workspace_id": "workspace-a",
+                "remaining_chat_ids": ["chat-2"],
+                "chats": [
+                    {
+                        "chat_id": "chat-2",
+                        "title": "Chat two",
+                        "updated_at_ts": 20.0,
+                    }
+                ],
+            }
+        },
+    )
+
+    response = api_client.delete_chat(
+        chat_id="chat-1",
+        workspace_id="workspace-a",
+        config=_make_config(tmp_path),
+    )
+
+    assert response.deleted_chat_id == "chat-1"
+    assert response.remaining_chat_ids == ["chat-2"]
+    assert response.chats[0].chat_id == "chat-2"
+    assert calls[-1] == {
+        "method": "DELETE",
+        "path": "/chats/chat-1",
+        "params": {"workspace_id": "workspace-a"},
+    }
+
+
 def test_post_chat_turn_parses_response(monkeypatch, tmp_path):
     calls = []
-
-    class FakeResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
+    _install_fake_client(
+        monkeypatch,
+        calls,
+        {
+            ("POST", "/chat"): {
                 "chat_id": "chat-123",
                 "workspace_id": "workspace-a",
                 "chat_turn": 3,
@@ -54,22 +225,8 @@ def test_post_chat_turn_parses_response(monkeypatch, tmp_path):
                     "image_results": [],
                 },
             }
-
-    class FakeClient:
-        def __init__(self, *, base_url, timeout):
-            calls.append({"base_url": base_url, "timeout": timeout})
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def post(self, path, *, json):
-            calls.append({"path": path, "json": json})
-            return FakeResponse()
-
-    monkeypatch.setattr(api_client.httpx, "Client", FakeClient)
+        },
+    )
 
     response = api_client.post_chat_turn(
         chat_id="chat-123",
@@ -83,15 +240,13 @@ def test_post_chat_turn_parses_response(monkeypatch, tmp_path):
     assert response.chat_turn == 3
     assert response.title == "Denim title"
     assert response.assistant_response.rule == "Assistant rule."
-    assert calls == [
-        {"base_url": "http://api.test", "timeout": 120.0},
-        {
-            "path": "/chat",
-            "json": {
-                "chat_id": "chat-123",
-                "workspace_id": "workspace-a",
-                "message": "What denim shapes are trending?",
-            },
+    assert calls[-1] == {
+        "method": "POST",
+        "path": "/chat",
+        "json": {
+            "chat_id": "chat-123",
+            "workspace_id": "workspace-a",
+            "message": "What denim shapes are trending?",
         },
-    ]
+    }
 

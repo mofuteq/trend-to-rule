@@ -5,15 +5,14 @@ from pathlib import Path
 import streamlit as st
 
 from core.app_config import load_app_config
+from services.api_client import create_chat, delete_chat, get_chat, list_chats
 from ui.app_sidebar import setup_chat_selector
 from ui.app_chat import render_chat_input, render_history
 from ui.app_state import (
-    get_chat_db,
     get_workspace_user_id,
     init_session_state,
-    load_active_chat,
-    load_user_chat_ids,
     start_new_chat_session,
+    sync_active_chat_session,
 )
 CONFIG = load_app_config()
 SRC_ROOT = Path(__file__).resolve().parent
@@ -45,27 +44,40 @@ def main() -> None:
         query_key=CONFIG.workspace_query_key,
         default_workspace_key=CONFIG.default_workspace_key,
     )
-    if not st.session_state.chat_id:
-        st.session_state.chat_id = str(uuid.uuid4())
 
-    chat_db = get_chat_db(
-        path=str(CONFIG.db_path),
-        db_names=[
-            CONFIG.chat_db_name,
-            CONFIG.user_db_name,
-            CONFIG.chat_meta_db_name,
-        ],
-    )
-    user_chat_ids = load_user_chat_ids(
-        user_id=user_id,
-        chat_db=chat_db,
-        user_db_name=CONFIG.user_db_name,
-    )
-    setup_chat_selector(
-        user_chat_ids=user_chat_ids,
-        chat_db=chat_db,
-        chat_meta_db_name=CONFIG.chat_meta_db_name,
-    )
+    chat_summaries = list_chats(
+        workspace_id=user_id,
+        config=CONFIG,
+    ).chats
+    if not st.session_state.chat_id:
+        created_chat = create_chat(
+            workspace_id=user_id,
+            chat_id=str(uuid.uuid4()),
+            config=CONFIG,
+        )
+        start_new_chat_session(chat_id=created_chat.chat_id)
+        chat_summaries = list_chats(
+            workspace_id=user_id,
+            config=CONFIG,
+        ).chats
+
+    active_chat_id = st.session_state.chat_id
+    active_known_chat_ids = {summary.chat_id for summary in chat_summaries}
+    if active_chat_id and active_chat_id not in active_known_chat_ids:
+        create_chat(
+            workspace_id=user_id,
+            chat_id=active_chat_id,
+            config=CONFIG,
+        )
+        chat_summaries = list_chats(
+            workspace_id=user_id,
+            config=CONFIG,
+        ).chats
+
+    setup_chat_selector(chat_summaries)
+    if st.session_state.loaded_chat_id != st.session_state.chat_id:
+        st.session_state.messages = []
+        st.session_state.history = []
     if (
         st.session_state.pending_delete_chat_id
         and st.session_state.pending_delete_chat_id != st.session_state.chat_id
@@ -74,9 +86,14 @@ def main() -> None:
 
     new_chat_col, delete_chat_col = st.sidebar.columns(2)
     if new_chat_col.button("New Chat", use_container_width=True):
+        created_chat = create_chat(
+            workspace_id=user_id,
+            chat_id=str(uuid.uuid4()),
+            config=CONFIG,
+        )
         st.session_state.clear()
         init_session_state()
-        start_new_chat_session(chat_id=str(uuid.uuid4()))
+        start_new_chat_session(chat_id=created_chat.chat_id)
         st.rerun()
 
     if delete_chat_col.button("Delete Chat", use_container_width=True):
@@ -88,15 +105,23 @@ def main() -> None:
         confirm_col, cancel_col = st.sidebar.columns(2)
         if confirm_col.button("Confirm", use_container_width=True):
             chat_id_to_delete = st.session_state.pending_delete_chat_id
-            chat_db.delete(chat_id_to_delete, CONFIG.chat_db_name)
-            chat_db.delete(chat_id_to_delete, CONFIG.chat_meta_db_name)
-            remaining_chat_ids = [
-                chat_id for chat_id in user_chat_ids if chat_id != chat_id_to_delete
-            ]
-            chat_db.put(user_id, remaining_chat_ids, CONFIG.user_db_name)
+            delete_response = delete_chat(
+                chat_id=chat_id_to_delete,
+                workspace_id=user_id,
+                config=CONFIG,
+            )
+            if delete_response.chats:
+                next_chat_id = delete_response.chats[0].chat_id
+            else:
+                created_chat = create_chat(
+                    workspace_id=user_id,
+                    chat_id=str(uuid.uuid4()),
+                    config=CONFIG,
+                )
+                next_chat_id = created_chat.chat_id
             st.session_state.clear()
             init_session_state()
-            start_new_chat_session(chat_id=str(uuid.uuid4()))
+            start_new_chat_session(chat_id=next_chat_id)
             st.rerun()
 
         if cancel_col.button("Cancel", use_container_width=True):
@@ -109,11 +134,14 @@ def main() -> None:
         "Patterns, not persuasion. This agent organizes signals without steering "
         "your decision."
     )
-    load_active_chat(
-        chat_db=chat_db,
-        chat_db_name=CONFIG.chat_db_name,
-        chat_meta_db_name=CONFIG.chat_meta_db_name,
-    )
+    if st.session_state.loaded_chat_id != st.session_state.chat_id:
+        sync_active_chat_session(
+            get_chat(
+                chat_id=st.session_state.chat_id,
+                workspace_id=user_id,
+                config=CONFIG,
+            )
+        )
     render_history()
     render_chat_input(
         user_id=user_id,

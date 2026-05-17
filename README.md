@@ -125,7 +125,7 @@ source. No local embedding model is required for the default runtime.
 
 ```mermaid
 flowchart TD
-    E[Streamlit app.py] --> API[FastAPI /chat]
+    E[Streamlit app.py] --> API[FastAPI HTTP API]
     API --> RT[shared chat runtime]
     RT --> W[chat_workflow LangGraph]
     W --> A[analyze_request]
@@ -153,8 +153,9 @@ flowchart TD
 ```
 
 The FastAPI boundary is implemented in [`src/api.py`](./src/api.py). It owns
-chat turn numbering, durable chat history and metadata updates, title
-generation, workspace chat-id updates, and the call into the shared chat runtime.
+chat execution, chat loading, chat listing, chat deletion, chat turn numbering,
+durable chat history and metadata updates, title generation, workspace chat-id
+updates, and the call into the shared chat runtime.
 
 The LangGraph workflow is implemented in
 [`src/services/chat_workflow.py`](./src/services/chat_workflow.py). It keeps
@@ -281,10 +282,12 @@ Key settings:
 
 ## Run Locally
 
-FastAPI is the chat execution boundary. It owns workflow invocation, chat turn
-numbering, chat history persistence, `last_request_goal`, title generation, and
-workspace chat-id updates. Streamlit is the UI client for chat rendering and user
-interaction.
+FastAPI owns chat execution and persisted chat management: workflow invocation,
+chat loading, chat listing, chat deletion, turn numbering, chat history
+persistence, `last_request_goal`, title generation, and workspace chat-id
+updates. Streamlit is now a UI client for chat rendering and user interaction.
+The backend process uses the same local `.data/` storage paths configured in
+`src/.env`.
 
 Terminal 1: launch the FastAPI backend with uvicorn:
 

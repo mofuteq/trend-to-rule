@@ -66,6 +66,139 @@ def test_health_endpoint_returns_ok():
     assert response.json() == {"status": "ok"}
 
 
+def test_create_chat_endpoint_initializes_chat(monkeypatch, tmp_path):
+    config = _install_test_api_config(monkeypatch, tmp_path)
+    client = TestClient(api.app)
+
+    response = client.post(
+        "/chats",
+        json={"workspace_id": "workspace-a", "chat_id": "chat-created"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["chat_id"] == "chat-created"
+    assert payload["workspace_id"] == "workspace-a"
+    assert payload["messages"] == []
+    assert payload["title"] == ""
+    assert payload["last_request_goal"] == ""
+    assert payload["chat_turn"] == 0
+
+    chat_db = open_chat_db(config)
+    assert chat_db.get("workspace-a", config.user_db_name) == ["chat-created"]
+    assert chat_db.get("chat-created", config.chat_meta_db_name)["chat_turn"] == 0
+
+
+def test_list_chats_endpoint_returns_workspace_summaries(monkeypatch, tmp_path):
+    config = _install_test_api_config(monkeypatch, tmp_path)
+    chat_db = open_chat_db(config)
+    chat_db.put("workspace-a", ["older", "newer"], config.user_db_name)
+    chat_db.put(
+        "older",
+        {"title": "Older chat", "updated_at_ts": 10.0, "chat_turn": 1},
+        config.chat_meta_db_name,
+    )
+    chat_db.put(
+        "newer",
+        {"title": "Newer chat", "updated_at_ts": 20.0, "chat_turn": 1},
+        config.chat_meta_db_name,
+    )
+    client = TestClient(api.app)
+
+    response = client.get("/chats", params={"workspace_id": "workspace-a"})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "workspace_id": "workspace-a",
+        "chats": [
+            {"chat_id": "newer", "title": "Newer chat", "updated_at_ts": 20.0},
+            {"chat_id": "older", "title": "Older chat", "updated_at_ts": 10.0},
+        ],
+    }
+
+
+def test_get_chat_endpoint_returns_messages_and_metadata(monkeypatch, tmp_path):
+    config = _install_test_api_config(monkeypatch, tmp_path)
+    chat_db = open_chat_db(config)
+    chat_db.put(
+        "chat-read",
+        [
+            {"role": "user", "content": "Question"},
+            {"role": "assistant", "content": "Answer"},
+        ],
+        config.chat_db_name,
+    )
+    chat_db.put(
+        "chat-read",
+        {
+            "title": "Read title",
+            "last_request_goal": "read goal",
+            "chat_turn": 1,
+            "updated_at_ts": 30.0,
+        },
+        config.chat_meta_db_name,
+    )
+    client = TestClient(api.app)
+
+    response = client.get(
+        "/chats/chat-read",
+        params={"workspace_id": "workspace-a"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "chat_id": "chat-read",
+        "workspace_id": "workspace-a",
+        "messages": [
+            {"role": "user", "content": "Question"},
+            {"role": "assistant", "content": "Answer"},
+        ],
+        "title": "Read title",
+        "last_request_goal": "read goal",
+        "chat_turn": 1,
+    }
+
+
+def test_delete_chat_endpoint_removes_chat_and_workspace_entry(monkeypatch, tmp_path):
+    config = _install_test_api_config(monkeypatch, tmp_path)
+    chat_db = open_chat_db(config)
+    chat_db.put("workspace-a", ["keep-chat", "delete-chat"], config.user_db_name)
+    chat_db.put(
+        "keep-chat",
+        {"title": "Keep", "updated_at_ts": 20.0, "chat_turn": 0},
+        config.chat_meta_db_name,
+    )
+    chat_db.put(
+        "delete-chat",
+        [{"role": "user", "content": "Delete me"}],
+        config.chat_db_name,
+    )
+    chat_db.put(
+        "delete-chat",
+        {"title": "Delete", "updated_at_ts": 30.0, "chat_turn": 1},
+        config.chat_meta_db_name,
+    )
+    client = TestClient(api.app)
+
+    response = client.delete(
+        "/chats/delete-chat",
+        params={"workspace_id": "workspace-a"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "deleted_chat_id": "delete-chat",
+        "workspace_id": "workspace-a",
+        "remaining_chat_ids": ["keep-chat"],
+        "chats": [
+            {"chat_id": "keep-chat", "title": "Keep", "updated_at_ts": 20.0},
+        ],
+    }
+    assert chat_db.get("delete-chat", config.chat_db_name) is None
+    assert chat_db.get("delete-chat", config.chat_meta_db_name) is None
+    assert chat_db.get("workspace-a", config.user_db_name) == ["keep-chat"]
+
+
 def test_chat_endpoint_owns_turn_numbering_and_persistence(monkeypatch, tmp_path):
     config = _install_test_api_config(monkeypatch, tmp_path)
     calls = []
@@ -231,4 +364,3 @@ def test_chat_endpoint_adds_chat_id_to_workspace_list(monkeypatch, tmp_path):
         "existing-chat",
         "new-chat",
     ]
-

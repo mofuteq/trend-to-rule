@@ -4,7 +4,6 @@ from core.app_config import AppConfig
 from core.text_utils import normalize_text_nfkc
 from services.api_client import post_chat_turn
 from services.api_models import ChatResponse
-from services.chat_session import messages_to_model_history
 from services.chat_workflow import RetrievalBundle
 from services.image_search import ImageSearchResult
 from services.web_search import build_web_sources_html_table
@@ -105,8 +104,10 @@ def sync_rendered_turn(response: ChatResponse) -> None:
         {"role": "assistant", "content": response.assistant_response.rule},
     ]
     st.session_state.messages.extend(turn_messages)
-    st.session_state.history.extend(messages_to_model_history(turn_messages))
     st.session_state.chat_turn = response.chat_turn
+    st.session_state.last_request_goal = (
+        response.assistant_response.request_analysis.request_goal
+    )
 
 
 def process_user_prompt(

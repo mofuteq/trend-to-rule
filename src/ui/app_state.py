@@ -1,17 +1,6 @@
 import streamlit as st
 
-from services.chat_session import (
-    get_chat_meta,
-    load_chat_messages,
-    load_user_chat_ids,
-    messages_to_model_history,
-    normalize_chat_id_list,
-    set_chat_title,
-    set_last_request_goal,
-    sort_chat_ids_by_last_updated,
-    update_chat_meta,
-)
-from storage.chat_db import ChatDB
+from services.api_models import ChatMessage, ChatSessionResponse
 
 
 def init_session_state() -> None:
@@ -31,25 +20,6 @@ def init_session_state() -> None:
     st.session_state.setdefault("chat_turn", 0)
     if not isinstance(st.session_state.chat_id, str):
         st.session_state.chat_id = str(st.session_state.chat_id)
-
-
-def get_chat_db(
-    *,
-    path: str,
-    db_names: list[str],
-) -> ChatDB:
-    """Get chat db instance from session state.
-
-    Args:
-        path: Chat DB filesystem path.
-        db_names: LMDB database names to open.
-
-    Returns:
-        ChatDB: Cached chat database instance.
-    """
-    if "chat_db" not in st.session_state:
-        st.session_state.chat_db = ChatDB(path=path, db_names=db_names)
-    return st.session_state.chat_db
 
 
 def reset_chat_selection() -> None:
@@ -111,56 +81,17 @@ def start_new_chat_session(chat_id: str) -> None:
     st.session_state.history = []
 
 
-def load_active_chat(chat_db: ChatDB, chat_db_name: str, chat_meta_db_name: str) -> None:
-    """Load active chat messages from db into session state."""
-    if st.session_state.loaded_chat_id != st.session_state.chat_id:
-        saved_messages = load_chat_messages(
-            chat_id=st.session_state.chat_id,
-            chat_db=chat_db,
-            chat_db_name=chat_db_name,
-        )
-        meta = get_chat_meta(
-            chat_id=st.session_state.chat_id,
-            chat_db=chat_db,
-            chat_meta_db_name=chat_meta_db_name,
-        )
-        st.session_state.last_request_goal = str(
-            meta.get("last_request_goal") or meta.get("last_user_goal") or ""
-        )
-        st.session_state.messages = saved_messages
-        st.session_state.history = messages_to_model_history(saved_messages)
-        st.session_state.loaded_chat_id = st.session_state.chat_id
+def sync_active_chat_session(chat_session: ChatSessionResponse) -> None:
+    """Copy a backend-owned chat session into Streamlit display state."""
+    st.session_state.chat_id = chat_session.chat_id
+    st.session_state.loaded_chat_id = chat_session.chat_id
+    st.session_state.last_request_goal = chat_session.last_request_goal
+    st.session_state.chat_turn = chat_session.chat_turn
+    st.session_state.messages = [
+        _message_to_dict(message) for message in chat_session.messages
+    ]
+    st.session_state.history = []
 
 
-def add_turn(
-    user_content: str,
-    assistant_content: str,
-    chat_db: ChatDB,
-    chat_db_name: str,
-    chat_meta_db_name: str,
-) -> None:
-    """Append a completed user/assistant turn and persist it to db."""
-    st.session_state.messages.extend(
-        [
-            {"role": "user", "content": user_content},
-            {"role": "assistant", "content": assistant_content},
-        ]
-    )
-    st.session_state.history.extend(
-        messages_to_model_history(
-            [
-                {"role": "user", "content": user_content},
-                {"role": "assistant", "content": assistant_content},
-            ]
-        )
-    )
-    chat_db.put(
-        key=st.session_state.chat_id,
-        value=st.session_state.messages,
-        db_name=chat_db_name,
-    )
-    update_chat_meta(
-        chat_id=st.session_state.chat_id,
-        chat_db=chat_db,
-        chat_meta_db_name=chat_meta_db_name,
-    )
+def _message_to_dict(message: ChatMessage) -> dict[str, str]:
+    return {"role": message.role, "content": message.content}
