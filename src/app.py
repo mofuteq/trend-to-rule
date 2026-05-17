@@ -12,8 +12,14 @@ from services.api_client import (
     list_chats,
     resume_chat,
 )
+from services.api_models import ChatResponse
 from ui.app_sidebar import setup_chat_selector
-from ui.app_chat import render_chat_input, render_history, sync_rendered_turn
+from ui.app_chat import (
+    render_chat_input,
+    render_history,
+    render_response_artifacts,
+    sync_rendered_turn,
+)
 from ui.app_state import (
     choose_initial_chat_id,
     get_workspace_user_id,
@@ -155,23 +161,25 @@ def main() -> None:
                 config=CONFIG,
             )
         )
-    maybe_auto_resume_active_chat(user_id=user_id, config=CONFIG)
+    auto_resumed_response = maybe_auto_resume_active_chat(user_id=user_id, config=CONFIG)
     render_history()
+    if auto_resumed_response is not None:
+        render_response_artifacts(auto_resumed_response)
     render_chat_input(
         user_id=user_id,
         config=CONFIG,
     )
 
 
-def maybe_auto_resume_active_chat(*, user_id: str, config) -> None:
+def maybe_auto_resume_active_chat(*, user_id: str, config) -> ChatResponse | None:
     """Resume one unfinished workflow run once per Streamlit session."""
     thread_id = str(st.session_state.get("latest_thread_id") or "")
     if not is_resumable_workflow_status(
         str(st.session_state.get("latest_workflow_status") or "")
     ):
-        return
+        return None
     if not thread_id or has_attempted_auto_resume(thread_id):
-        return
+        return None
 
     mark_auto_resume_attempted(thread_id)
     try:
@@ -184,7 +192,7 @@ def maybe_auto_resume_active_chat(*, user_id: str, config) -> None:
         )
     except Exception:
         st.error("Could not resume the unfinished response. Please try again later.")
-        return
+        return None
 
     sync_rendered_turn(response)
     sync_active_chat_session(
@@ -194,6 +202,7 @@ def maybe_auto_resume_active_chat(*, user_id: str, config) -> None:
             config=config,
         )
     )
+    return response
 
 
 if __name__ == "__main__":
