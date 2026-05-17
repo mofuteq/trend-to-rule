@@ -1,4 +1,7 @@
 from pathlib import Path
+import json
+
+import httpx
 
 from core.app_config import AppConfig
 from services import api_client
@@ -25,46 +28,41 @@ def _make_config(tmp_path: Path) -> AppConfig:
     )
 
 
-class FakeResponse:
-    def __init__(self, payload):
-        self.payload = payload
+def _install_mock_transport(monkeypatch, calls, payloads):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.content:
+            body = json.loads(request.content.decode())
+        else:
+            body = None
+        calls.append(
+            {
+                "method": request.method,
+                "url": str(request.url),
+                "body": body,
+            }
+        )
+        return httpx.Response(
+            200,
+            json=payloads[(request.method, request.url.path)],
+        )
 
-    def raise_for_status(self):
-        return None
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.Client
 
-    def json(self):
-        return self.payload
+    def fake_client(*, base_url, timeout):
+        calls.append({"base_url": base_url, "timeout": timeout})
+        return real_client(
+            base_url=base_url,
+            timeout=timeout,
+            transport=transport,
+        )
 
-
-def _install_fake_client(monkeypatch, calls, payloads):
-    class FakeClient:
-        def __init__(self, *, base_url, timeout):
-            calls.append({"base_url": base_url, "timeout": timeout})
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def get(self, path, *, params):
-            calls.append({"method": "GET", "path": path, "params": params})
-            return FakeResponse(payloads[("GET", path)])
-
-        def post(self, path, *, json):
-            calls.append({"method": "POST", "path": path, "json": json})
-            return FakeResponse(payloads[("POST", path)])
-
-        def delete(self, path, *, params):
-            calls.append({"method": "DELETE", "path": path, "params": params})
-            return FakeResponse(payloads[("DELETE", path)])
-
-    monkeypatch.setattr(api_client.httpx, "Client", FakeClient)
+    monkeypatch.setattr(api_client.httpx, "Client", fake_client)
 
 
 def test_list_chats_parses_response(monkeypatch, tmp_path):
     calls = []
-    _install_fake_client(
+    _install_mock_transport(
         monkeypatch,
         calls,
         {
@@ -89,16 +87,19 @@ def test_list_chats_parses_response(monkeypatch, tmp_path):
     assert response.workspace_id == "workspace-a"
     assert response.chats[0].chat_id == "chat-1"
     assert response.chats[0].title == "Chat one"
-    assert calls[-1] == {
-        "method": "GET",
-        "path": "/chats",
-        "params": {"workspace_id": "workspace-a"},
-    }
+    assert calls == [
+        {"base_url": "http://api.test", "timeout": 120.0},
+        {
+            "method": "GET",
+            "url": "http://api.test/chats?workspace_id=workspace-a",
+            "body": None,
+        },
+    ]
 
 
 def test_get_chat_parses_response(monkeypatch, tmp_path):
     calls = []
-    _install_fake_client(
+    _install_mock_transport(
         monkeypatch,
         calls,
         {
@@ -122,16 +123,19 @@ def test_get_chat_parses_response(monkeypatch, tmp_path):
     assert response.chat_id == "chat-1"
     assert response.messages[0].content == "Hello"
     assert response.last_request_goal == "goal"
-    assert calls[-1] == {
-        "method": "GET",
-        "path": "/chats/chat-1",
-        "params": {"workspace_id": "workspace-a"},
-    }
+    assert calls == [
+        {"base_url": "http://api.test", "timeout": 120.0},
+        {
+            "method": "GET",
+            "url": "http://api.test/chats/chat-1?workspace_id=workspace-a",
+            "body": None,
+        },
+    ]
 
 
 def test_create_chat_parses_response(monkeypatch, tmp_path):
     calls = []
-    _install_fake_client(
+    _install_mock_transport(
         monkeypatch,
         calls,
         {
@@ -154,16 +158,19 @@ def test_create_chat_parses_response(monkeypatch, tmp_path):
 
     assert response.chat_id == "chat-1"
     assert response.messages == []
-    assert calls[-1] == {
-        "method": "POST",
-        "path": "/chats",
-        "json": {"workspace_id": "workspace-a", "chat_id": "chat-1"},
-    }
+    assert calls == [
+        {"base_url": "http://api.test", "timeout": 120.0},
+        {
+            "method": "POST",
+            "url": "http://api.test/chats",
+            "body": {"workspace_id": "workspace-a", "chat_id": "chat-1"},
+        },
+    ]
 
 
 def test_delete_chat_parses_response(monkeypatch, tmp_path):
     calls = []
-    _install_fake_client(
+    _install_mock_transport(
         monkeypatch,
         calls,
         {
@@ -191,16 +198,19 @@ def test_delete_chat_parses_response(monkeypatch, tmp_path):
     assert response.deleted_chat_id == "chat-1"
     assert response.remaining_chat_ids == ["chat-2"]
     assert response.chats[0].chat_id == "chat-2"
-    assert calls[-1] == {
-        "method": "DELETE",
-        "path": "/chats/chat-1",
-        "params": {"workspace_id": "workspace-a"},
-    }
+    assert calls == [
+        {"base_url": "http://api.test", "timeout": 120.0},
+        {
+            "method": "DELETE",
+            "url": "http://api.test/chats/chat-1?workspace_id=workspace-a",
+            "body": None,
+        },
+    ]
 
 
 def test_post_chat_turn_parses_response(monkeypatch, tmp_path):
     calls = []
-    _install_fake_client(
+    _install_mock_transport(
         monkeypatch,
         calls,
         {
@@ -240,13 +250,15 @@ def test_post_chat_turn_parses_response(monkeypatch, tmp_path):
     assert response.chat_turn == 3
     assert response.title == "Denim title"
     assert response.assistant_response.rule == "Assistant rule."
-    assert calls[-1] == {
-        "method": "POST",
-        "path": "/chat",
-        "json": {
-            "chat_id": "chat-123",
-            "workspace_id": "workspace-a",
-            "message": "What denim shapes are trending?",
+    assert calls == [
+        {"base_url": "http://api.test", "timeout": 120.0},
+        {
+            "method": "POST",
+            "url": "http://api.test/chat",
+            "body": {
+                "chat_id": "chat-123",
+                "workspace_id": "workspace-a",
+                "message": "What denim shapes are trending?",
+            },
         },
-    }
-
+    ]
