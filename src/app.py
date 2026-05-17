@@ -17,7 +17,6 @@ from ui.app_sidebar import setup_chat_selector
 from ui.app_chat import (
     render_chat_input,
     render_history,
-    render_response_artifacts,
     sync_rendered_turn,
 )
 from ui.app_state import (
@@ -161,10 +160,8 @@ def main() -> None:
                 config=CONFIG,
             )
         )
-    auto_resumed_response = maybe_auto_resume_active_chat(user_id=user_id, config=CONFIG)
+    maybe_auto_resume_active_chat(user_id=user_id, config=CONFIG)
     render_history()
-    if auto_resumed_response is not None:
-        render_response_artifacts(auto_resumed_response)
     render_chat_input(
         user_id=user_id,
         config=CONFIG,

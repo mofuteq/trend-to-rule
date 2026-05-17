@@ -2,9 +2,24 @@
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from services.chat_workflow import AssistantResponseBundle
+from services.chat_workflow import AssistantResponseBundle, RetrievalBundle
+from services.image_search import ImageSearchResult
+
+
+def _empty_retrieval_bundle() -> RetrievalBundle:
+    return RetrievalBundle(canonical_context="", emerging_context="")
+
+
+def _display_retrieval_bundle(retrieval: RetrievalBundle) -> RetrievalBundle:
+    return RetrievalBundle(
+        canonical_context="",
+        emerging_context="",
+        canonical_rows=[dict(row) for row in retrieval.canonical_rows],
+        emerging_rows=[dict(row) for row in retrieval.emerging_rows],
+        error_message=retrieval.error_message,
+    )
 
 
 class ChatMessage(BaseModel):
@@ -12,6 +27,38 @@ class ChatMessage(BaseModel):
 
     role: Literal["user", "assistant"]
     content: str
+
+
+class PersistedTurnArtifacts(BaseModel):
+    """Display artifacts persisted for a completed assistant turn."""
+
+    chat_turn: int = Field(ge=1)
+    image_results: list[ImageSearchResult] = Field(default_factory=list)
+    retrieval: RetrievalBundle = Field(default_factory=_empty_retrieval_bundle)
+    image_query: str = ""
+    request_goal: str = ""
+    is_in_scope: bool = True
+
+    @classmethod
+    def from_assistant_response(
+        cls,
+        *,
+        chat_turn: int,
+        assistant_response: AssistantResponseBundle,
+    ) -> "PersistedTurnArtifacts":
+        """Build a display-oriented persisted artifact bundle."""
+        request_analysis = assistant_response.request_analysis
+        return cls(
+            chat_turn=chat_turn,
+            image_results=list(assistant_response.image_results),
+            retrieval=_display_retrieval_bundle(assistant_response.retrieval),
+            image_query=assistant_response.image_query,
+            request_goal=request_analysis.request_goal,
+            is_in_scope=request_analysis.is_in_scope,
+        )
+
+
+ChatTurnArtifactMap = dict[str, PersistedTurnArtifacts]
 
 
 class ChatSummary(BaseModel):
@@ -46,6 +93,7 @@ class ChatSessionResponse(BaseModel):
     latest_chat_turn: int | None = None
     latest_thread_id: str = ""
     latest_workflow_error: str = ""
+    turn_artifacts: ChatTurnArtifactMap = Field(default_factory=dict)
 
 
 class CreateChatRequest(BaseModel):
