@@ -77,7 +77,6 @@ def main() -> None:
     setup_chat_selector(chat_summaries)
     if st.session_state.loaded_chat_id != st.session_state.chat_id:
         st.session_state.messages = []
-        st.session_state.history = []
     if (
         st.session_state.pending_delete_chat_id
         and st.session_state.pending_delete_chat_id != st.session_state.chat_id

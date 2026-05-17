@@ -7,7 +7,6 @@ def init_session_state() -> None:
     """Initialize streamlit session state keys."""
     st.session_state.setdefault("user_id", "")
     st.session_state.setdefault("messages", [])
-    st.session_state.setdefault("history", [])
     st.session_state.setdefault("last_request_goal", "")
     if (
         not st.session_state.last_request_goal
@@ -29,7 +28,6 @@ def reset_chat_selection() -> None:
     st.session_state.last_request_goal = ""
     st.session_state.chat_turn = 0
     st.session_state.messages = []
-    st.session_state.history = []
     st.session_state.pending_delete_chat_id = ""
 
 
@@ -78,7 +76,6 @@ def start_new_chat_session(chat_id: str) -> None:
     st.session_state.last_request_goal = ""
     st.session_state.chat_turn = 0
     st.session_state.messages = []
-    st.session_state.history = []
 
 
 def sync_active_chat_session(chat_session: ChatSessionResponse) -> None:
@@ -90,7 +87,6 @@ def sync_active_chat_session(chat_session: ChatSessionResponse) -> None:
     st.session_state.messages = [
         _message_to_dict(message) for message in chat_session.messages
     ]
-    st.session_state.history = []
 
 
 def _message_to_dict(message: ChatMessage) -> dict[str, str]:
