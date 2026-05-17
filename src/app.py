@@ -182,17 +182,27 @@ def maybe_auto_resume_active_chat(*, user_id: str, config) -> ChatResponse | Non
         return None
 
     mark_auto_resume_attempted(thread_id)
-    try:
-        response = resume_chat(
-            chat_id=st.session_state.chat_id,
-            workspace_id=user_id,
-            config=config,
-            chat_turn=st.session_state.latest_chat_turn,
-            thread_id=thread_id,
+    with st.status("Resuming unfinished workflow...", expanded=False) as status:
+        try:
+            response = resume_chat(
+                chat_id=st.session_state.chat_id,
+                workspace_id=user_id,
+                config=config,
+                chat_turn=st.session_state.latest_chat_turn,
+                thread_id=thread_id,
+            )
+        except Exception:
+            status.update(
+                label="Could not resume the unfinished workflow.",
+                state="error",
+                expanded=False,
+            )
+            return None
+        status.update(
+            label="Resumed from checkpoint.",
+            state="complete",
+            expanded=False,
         )
-    except Exception:
-        st.error("Could not resume the unfinished response. Please try again later.")
-        return None
 
     sync_rendered_turn(response)
     sync_active_chat_session(
