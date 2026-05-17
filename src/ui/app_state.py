@@ -1,6 +1,8 @@
 import streamlit as st
 
-from services.api_models import ChatMessage, ChatSessionResponse
+from services.api_models import ChatMessage, ChatSessionResponse, ChatSummary
+
+RESUMABLE_WORKFLOW_STATUSES = {"running", "failed"}
 
 
 def init_session_state() -> None:
@@ -17,8 +19,18 @@ def init_session_state() -> None:
     st.session_state.setdefault("loaded_chat_id", "")
     st.session_state.setdefault("pending_delete_chat_id", "")
     st.session_state.setdefault("chat_turn", 0)
+    st.session_state.setdefault("latest_workflow_status", "")
+    st.session_state.setdefault("latest_chat_turn", None)
+    st.session_state.setdefault("latest_thread_id", "")
+    st.session_state.setdefault("latest_workflow_error", "")
+    st.session_state.setdefault("attempted_auto_resume_thread_ids", [])
     if not isinstance(st.session_state.chat_id, str):
         st.session_state.chat_id = str(st.session_state.chat_id)
+    attempted_thread_ids = st.session_state.attempted_auto_resume_thread_ids
+    if isinstance(attempted_thread_ids, (set, tuple)):
+        st.session_state.attempted_auto_resume_thread_ids = list(attempted_thread_ids)
+    elif not isinstance(attempted_thread_ids, list):
+        st.session_state.attempted_auto_resume_thread_ids = []
 
 
 def reset_chat_selection() -> None:
@@ -29,6 +41,7 @@ def reset_chat_selection() -> None:
     st.session_state.chat_turn = 0
     st.session_state.messages = []
     st.session_state.pending_delete_chat_id = ""
+    reset_workflow_state()
 
 
 def get_workspace_user_id(query_key: str, default_workspace_key: str) -> str:
@@ -76,6 +89,7 @@ def start_new_chat_session(chat_id: str) -> None:
     st.session_state.last_request_goal = ""
     st.session_state.chat_turn = 0
     st.session_state.messages = []
+    reset_workflow_state()
 
 
 def sync_active_chat_session(chat_session: ChatSessionResponse) -> None:
@@ -87,6 +101,55 @@ def sync_active_chat_session(chat_session: ChatSessionResponse) -> None:
     st.session_state.messages = [
         _message_to_dict(message) for message in chat_session.messages
     ]
+    st.session_state.latest_workflow_status = chat_session.latest_workflow_status
+    st.session_state.latest_chat_turn = chat_session.latest_chat_turn
+    st.session_state.latest_thread_id = chat_session.latest_thread_id
+    st.session_state.latest_workflow_error = chat_session.latest_workflow_error
+
+
+def reset_workflow_state() -> None:
+    """Clear active workflow metadata from Streamlit session state."""
+    st.session_state.latest_workflow_status = ""
+    st.session_state.latest_chat_turn = None
+    st.session_state.latest_thread_id = ""
+    st.session_state.latest_workflow_error = ""
+
+
+def find_latest_resumable_chat_id(chat_summaries: list[ChatSummary]) -> str:
+    """Return the most recently updated chat id with an unfinished workflow."""
+    for summary in chat_summaries:
+        if is_resumable_workflow_status(summary.latest_workflow_status):
+            return summary.chat_id
+    return ""
+
+
+def choose_initial_chat_id(chat_summaries: list[ChatSummary]) -> str:
+    """Choose the initial chat when opening the UI without active session state."""
+    resumable_chat_id = find_latest_resumable_chat_id(chat_summaries)
+    if resumable_chat_id:
+        return resumable_chat_id
+    if chat_summaries:
+        return chat_summaries[0].chat_id
+    return ""
+
+
+def is_resumable_workflow_status(status: str) -> bool:
+    """Return True when a workflow status can be auto-resumed."""
+    return status in RESUMABLE_WORKFLOW_STATUSES
+
+
+def has_attempted_auto_resume(thread_id: str) -> bool:
+    """Return True if this Streamlit session already tried a thread id."""
+    if not thread_id:
+        return False
+    return thread_id in st.session_state.attempted_auto_resume_thread_ids
+
+
+def mark_auto_resume_attempted(thread_id: str) -> None:
+    """Remember that auto-resume has been attempted for a thread id."""
+    if not thread_id or has_attempted_auto_resume(thread_id):
+        return
+    st.session_state.attempted_auto_resume_thread_ids.append(thread_id)
 
 
 def _message_to_dict(message: ChatMessage) -> dict[str, str]:

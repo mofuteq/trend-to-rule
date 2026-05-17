@@ -6,6 +6,7 @@ import threading
 import uuid
 
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic_ai.messages import ModelMessage
@@ -71,6 +72,22 @@ FINAL_ANSWER_RUBRIC_BOOLEAN_FIELDS = (
     "flows_as_continuous_prose",
     "avoids_listicle_style",
     "preserves_logical_completeness",
+)
+CHECKPOINT_ALLOWED_MSGPACK_MODULES = (
+    AppConfig,
+    ExampleQuerySpec,
+    FinalAnswerRubric,
+    RequestAnalysis,
+    StructuredClaims,
+    StructuredDraft,
+    WebSource,
+    ImageSearchResult,
+    ("pydantic_ai.messages", "ModelRequest"),
+    ("pydantic_ai.messages", "ModelResponse"),
+    ("pydantic_ai.messages", "TextPart"),
+    ("pydantic_ai.messages", "UserPromptPart"),
+    ("services.chat_workflow", "AssistantResponseState"),
+    ("services.chat_workflow", "RetrievalBundle"),
 )
 
 
@@ -613,7 +630,12 @@ def _build_checkpointer(config: AppConfig) -> SqliteSaver | None:
             check_same_thread=False,
         )
         _CHECKPOINTER_CONN = conn
-        saver = SqliteSaver(_CHECKPOINTER_CONN)
+        saver = SqliteSaver(
+            _CHECKPOINTER_CONN,
+            serde=JsonPlusSerializer(
+                allowed_msgpack_modules=CHECKPOINT_ALLOWED_MSGPACK_MODULES,
+            ),
+        )
         saver.setup()
         logger.info(
             "LangGraph checkpoints persisted to SQLite at %s",
@@ -655,6 +677,7 @@ def generate_assistant_response(
     last_request_goal: str | None,
     history: list[ModelMessage] | None,
     thread_id: str | None = None,
+    resume_from_checkpoint: bool = False,
     langfuse_session_id: str | None = None,
     langfuse_user_id: str | None = None,
 ) -> AssistantResponseBundle:
@@ -667,18 +690,22 @@ def generate_assistant_response(
         history: Prior chat history.
         thread_id: LangGraph checkpoint thread id; one is generated when omitted
             so each invocation starts from a clean state.
+        resume_from_checkpoint: Continue from the saved checkpoint for
+            ``thread_id`` instead of starting from a fresh input state.
         langfuse_session_id: Chat session id used only for Langfuse grouping.
         langfuse_user_id: User id used only for Langfuse grouping.
 
     Returns:
         AssistantResponseBundle: Claims, draft, final rule, and related images.
     """
-    initial_state = AssistantResponseState(
-        user_prompt=user_prompt,
-        config=config,
-        last_request_goal=last_request_goal,
-        history=history,
-    )
+    initial_state = None
+    if not resume_from_checkpoint:
+        initial_state = AssistantResponseState(
+            user_prompt=user_prompt,
+            config=config,
+            last_request_goal=last_request_goal,
+            history=history,
+        )
     resolved_thread_id = thread_id or str(uuid.uuid4())
     tags = [*tracing.get_repoa_trace_tags(), "chat_workflow", "langgraph"]
     metadata = {

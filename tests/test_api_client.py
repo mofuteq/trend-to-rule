@@ -262,3 +262,58 @@ def test_post_chat_turn_parses_response(monkeypatch, tmp_path):
             },
         },
     ]
+
+
+def test_resume_chat_posts_resume_request(monkeypatch, tmp_path):
+    calls = []
+    _install_mock_transport(
+        monkeypatch,
+        calls,
+        {
+            ("POST", "/chats/chat-123/resume"): {
+                "chat_id": "chat-123",
+                "workspace_id": "workspace-a",
+                "chat_turn": 3,
+                "message": "What denim shapes are trending?",
+                "title": "Denim title",
+                "assistant_response": {
+                    "request_analysis": {
+                        "request_goal": "compare denim silhouettes",
+                        "candidate_queries": {
+                            "canonical_query": "classic denim silhouettes",
+                            "emerging_query": "emerging denim silhouettes",
+                        },
+                        "vertical": "womens",
+                        "is_in_scope": True,
+                    },
+                    "rule": "Resumed assistant rule.",
+                    "image_query": "wide leg denim outfits",
+                    "image_results": [],
+                },
+            }
+        },
+    )
+
+    response = api_client.resume_chat(
+        chat_id="chat-123",
+        workspace_id="workspace-a",
+        chat_turn=3,
+        thread_id="chat-123:3",
+        config=_make_config(tmp_path),
+    )
+
+    assert response.chat_id == "chat-123"
+    assert response.chat_turn == 3
+    assert response.assistant_response.rule == "Resumed assistant rule."
+    assert calls == [
+        {"base_url": "http://api.test", "timeout": 120.0},
+        {
+            "method": "POST",
+            "url": "http://api.test/chats/chat-123/resume",
+            "body": {
+                "workspace_id": "workspace-a",
+                "chat_turn": 3,
+                "thread_id": "chat-123:3",
+            },
+        },
+    ]

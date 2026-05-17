@@ -20,6 +20,10 @@ class ChatSummary(BaseModel):
     chat_id: str
     title: str = ""
     updated_at_ts: float | None = None
+    latest_workflow_status: str = ""
+    latest_chat_turn: int | None = None
+    latest_thread_id: str = ""
+    latest_workflow_error: str = ""
 
 
 class ListChatsResponse(BaseModel):
@@ -38,6 +42,10 @@ class ChatSessionResponse(BaseModel):
     title: str = ""
     last_request_goal: str = ""
     chat_turn: int = 0
+    latest_workflow_status: str = ""
+    latest_chat_turn: int | None = None
+    latest_thread_id: str = ""
+    latest_workflow_error: str = ""
 
 
 class CreateChatRequest(BaseModel):
@@ -66,6 +74,14 @@ class ChatRequest(BaseModel):
     chat_id: str
     message: str
     workspace_id: str | None = None
+
+
+class ResumeChatRequest(BaseModel):
+    """Resume the latest checkpoint-backed workflow run for a chat."""
+
+    workspace_id: str | None = None
+    chat_turn: int | None = None
+    thread_id: str | None = None
 
 
 class ChatResponse(BaseModel):

@@ -5,12 +5,28 @@ from pathlib import Path
 import streamlit as st
 
 from core.app_config import load_app_config
-from services.api_client import create_chat, delete_chat, get_chat, list_chats
+from services.api_client import (
+    create_chat,
+    delete_chat,
+    get_chat,
+    list_chats,
+    resume_chat,
+)
+from services.api_models import ChatResponse
 from ui.app_sidebar import setup_chat_selector
-from ui.app_chat import render_chat_input, render_history
+from ui.app_chat import (
+    render_chat_input,
+    render_history,
+    render_response_artifacts,
+    sync_rendered_turn,
+)
 from ui.app_state import (
+    choose_initial_chat_id,
     get_workspace_user_id,
+    has_attempted_auto_resume,
     init_session_state,
+    is_resumable_workflow_status,
+    mark_auto_resume_attempted,
     start_new_chat_session,
     sync_active_chat_session,
 )
@@ -50,16 +66,20 @@ def main() -> None:
         config=CONFIG,
     ).chats
     if not st.session_state.chat_id:
-        created_chat = create_chat(
-            workspace_id=user_id,
-            chat_id=str(uuid.uuid4()),
-            config=CONFIG,
-        )
-        start_new_chat_session(chat_id=created_chat.chat_id)
-        chat_summaries = list_chats(
-            workspace_id=user_id,
-            config=CONFIG,
-        ).chats
+        initial_chat_id = choose_initial_chat_id(chat_summaries)
+        if initial_chat_id:
+            start_new_chat_session(chat_id=initial_chat_id)
+        else:
+            created_chat = create_chat(
+                workspace_id=user_id,
+                chat_id=str(uuid.uuid4()),
+                config=CONFIG,
+            )
+            start_new_chat_session(chat_id=created_chat.chat_id)
+            chat_summaries = list_chats(
+                workspace_id=user_id,
+                config=CONFIG,
+            ).chats
 
     active_chat_id = st.session_state.chat_id
     active_known_chat_ids = {summary.chat_id for summary in chat_summaries}
@@ -141,11 +161,58 @@ def main() -> None:
                 config=CONFIG,
             )
         )
+    auto_resumed_response = maybe_auto_resume_active_chat(user_id=user_id, config=CONFIG)
     render_history()
+    if auto_resumed_response is not None:
+        render_response_artifacts(auto_resumed_response)
     render_chat_input(
         user_id=user_id,
         config=CONFIG,
     )
+
+
+def maybe_auto_resume_active_chat(*, user_id: str, config) -> ChatResponse | None:
+    """Resume one unfinished workflow run once per Streamlit session."""
+    thread_id = str(st.session_state.get("latest_thread_id") or "")
+    if not is_resumable_workflow_status(
+        str(st.session_state.get("latest_workflow_status") or "")
+    ):
+        return None
+    if not thread_id or has_attempted_auto_resume(thread_id):
+        return None
+
+    mark_auto_resume_attempted(thread_id)
+    with st.status("Resuming unfinished workflow...", expanded=False) as status:
+        try:
+            response = resume_chat(
+                chat_id=st.session_state.chat_id,
+                workspace_id=user_id,
+                config=config,
+                chat_turn=st.session_state.latest_chat_turn,
+                thread_id=thread_id,
+            )
+        except Exception:
+            status.update(
+                label="Could not resume the unfinished workflow.",
+                state="error",
+                expanded=False,
+            )
+            return None
+        status.update(
+            label="Resumed from checkpoint.",
+            state="complete",
+            expanded=False,
+        )
+
+    sync_rendered_turn(response)
+    sync_active_chat_session(
+        get_chat(
+            chat_id=st.session_state.chat_id,
+            workspace_id=user_id,
+            config=config,
+        )
+    )
+    return response
 
 
 if __name__ == "__main__":

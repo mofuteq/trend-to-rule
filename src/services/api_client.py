@@ -11,6 +11,7 @@ from services.api_models import (
     CreateChatResponse,
     DeleteChatResponse,
     ListChatsResponse,
+    ResumeChatRequest,
 )
 
 
@@ -87,6 +88,29 @@ def post_chat_turn(
     )
     with _client(config) as client:
         response = client.post("/chat", json=request.model_dump())
+        response.raise_for_status()
+        return ChatResponse.model_validate(response.json())
+
+
+def resume_chat(
+    *,
+    chat_id: str,
+    workspace_id: str,
+    config: AppConfig,
+    chat_turn: int | None = None,
+    thread_id: str | None = None,
+) -> ChatResponse:
+    """Resume the latest checkpoint-backed workflow run for a chat."""
+    request = ResumeChatRequest(
+        workspace_id=workspace_id,
+        chat_turn=chat_turn,
+        thread_id=thread_id,
+    )
+    with _client(config) as client:
+        response = client.post(
+            f"/chats/{chat_id}/resume",
+            json=request.model_dump(),
+        )
         response.raise_for_status()
         return ChatResponse.model_validate(response.json())
 

@@ -1,4 +1,5 @@
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -100,6 +101,195 @@ def _retrieval_with_evidence() -> workflow.RetrievalBundle:
         ],
         emerging_sources=[],
     )
+
+
+def test_build_checkpointer_allows_repoa_checkpoint_models(tmp_path):
+    checkpointer = workflow._build_checkpointer(_make_config(tmp_path))
+
+    try:
+        assert checkpointer is not None
+        allowed_modules = checkpointer.serde._allowed_msgpack_modules
+        assert ("core.models", "RequestAnalysis") in allowed_modules
+        assert ("services.chat_workflow", "RetrievalBundle") in allowed_modules
+        assert ("core.app_config", "AppConfig") in allowed_modules
+    finally:
+        if workflow._CHECKPOINTER_CONN is not None:
+            workflow._CHECKPOINTER_CONN.close()
+            workflow._CHECKPOINTER_CONN = None
+
+
+def test_generate_assistant_response_resume_invokes_checkpoint_without_new_input(
+    monkeypatch,
+    tmp_path,
+):
+    config = _make_config(tmp_path)
+    captured = {}
+
+    class FakeGraph:
+        def invoke(self, graph_input, invoke_config):
+            captured["graph_input"] = graph_input
+            captured["invoke_config"] = invoke_config
+            return {
+                "request_analysis": _request_analysis(in_scope=True),
+                "retrieval": workflow._empty_retrieval_bundle(),
+                "rule": "Resumed response.",
+            }
+
+    monkeypatch.setattr(workflow, "_get_compiled_graph", lambda config: FakeGraph())
+
+    result = workflow.generate_assistant_response(
+        user_prompt="Resume this turn",
+        config=config,
+        last_request_goal="previous goal",
+        history=[],
+        thread_id="chat-123:2",
+        resume_from_checkpoint=True,
+    )
+
+    assert result.rule == "Resumed response."
+    assert captured["graph_input"] is None
+    assert captured["invoke_config"]["configurable"]["thread_id"] == "chat-123:2"
+
+
+def test_generate_assistant_response_resumes_real_sqlite_checkpoint(
+    monkeypatch,
+    tmp_path,
+):
+    config = _make_config(tmp_path)
+    thread_id = "resume-smoke:1"
+    calls = {
+        "analyze_request": 0,
+        "retrieve_supporting_context": 0,
+        "extract_claims": 0,
+        "extract_structured_draft": 0,
+        "generate_decision_support": 0,
+        "reflect_on_final_answer": 0,
+        "generate_query": 0,
+        "search_images": 0,
+    }
+
+    def reset_compiled_graph() -> None:
+        workflow._COMPILED_GRAPH = None
+        if workflow._CHECKPOINTER_CONN is not None:
+            workflow._CHECKPOINTER_CONN.close()
+            workflow._CHECKPOINTER_CONN = None
+
+    def fake_analyze_request(*, user_prompt, last_request_goal, history):
+        calls["analyze_request"] += 1
+        return _request_analysis(in_scope=True)
+
+    def fake_retrieve_supporting_context(request_analysis, *, config):
+        calls["retrieve_supporting_context"] += 1
+        return _retrieval_with_evidence()
+
+    def fake_extract_claims(*, canonical_context, emerging_context, request_goal):
+        calls["extract_claims"] += 1
+        if calls["extract_claims"] == 1:
+            raise RuntimeError("intentional checkpoint smoke failure")
+        return StructuredClaims(canonical_claims=[], emerging_claims=[])
+
+    def fake_extract_structured_draft(
+        *,
+        canonical_claims,
+        emerging_claims,
+        request_goal,
+    ):
+        calls["extract_structured_draft"] += 1
+        return _structured_draft()
+
+    def fake_generate_decision_support(**kwargs):
+        calls["generate_decision_support"] += 1
+        return "Recovered checkpoint answer."
+
+    def fake_reflect_on_final_answer(**kwargs):
+        calls["reflect_on_final_answer"] += 1
+        return _rubric()
+
+    def fake_generate_query(*, request_goal, rule):
+        calls["generate_query"] += 1
+        return ExampleQuerySpec(item="wide leg jeans", silhouette="wide")
+
+    def fake_search_images(*args, **kwargs):
+        calls["search_images"] += 1
+        return []
+
+    monkeypatch.setattr(workflow.tracing, "_ENABLED", False)
+    monkeypatch.setattr(workflow.tracing, "_CLIENT", None)
+    monkeypatch.setattr(workflow, "analyze_request", fake_analyze_request)
+    monkeypatch.setattr(
+        workflow,
+        "retrieve_supporting_context",
+        fake_retrieve_supporting_context,
+    )
+    monkeypatch.setattr(workflow, "extract_claims", fake_extract_claims)
+    monkeypatch.setattr(
+        workflow,
+        "extract_structured_draft",
+        fake_extract_structured_draft,
+    )
+    monkeypatch.setattr(
+        workflow,
+        "generate_decision_support",
+        fake_generate_decision_support,
+    )
+    monkeypatch.setattr(
+        workflow,
+        "reflect_on_final_answer",
+        fake_reflect_on_final_answer,
+    )
+    monkeypatch.setattr(workflow, "generate_query", fake_generate_query)
+    monkeypatch.setattr(workflow, "search_images", fake_search_images)
+    monkeypatch.setattr(workflow, "select_top_k", lambda candidates, *, k: [])
+
+    reset_compiled_graph()
+    try:
+        with pytest.raises(RuntimeError, match="intentional checkpoint smoke failure"):
+            workflow.generate_assistant_response(
+                user_prompt="What denim shapes are trending?",
+                config=config,
+                last_request_goal=None,
+                history=[],
+                thread_id=thread_id,
+            )
+
+        with sqlite3.connect(config.langgraph_sqlite_path) as conn:
+            checkpoint_count = conn.execute(
+                "SELECT COUNT(*) FROM checkpoints WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchone()[0]
+        assert checkpoint_count > 0
+
+        graph = workflow._get_compiled_graph(config)
+        snapshot = graph.get_state({"configurable": {"thread_id": thread_id}})
+        assert snapshot.values["request_analysis"].request_goal == (
+            "compare denim silhouettes"
+        )
+        assert snapshot.values["retrieval"].has_text_evidence() is True
+        assert "extract_claims" in snapshot.next
+        assert calls["analyze_request"] == 1
+        assert calls["retrieve_supporting_context"] == 1
+
+        result = workflow.generate_assistant_response(
+            user_prompt="What denim shapes are trending?",
+            config=config,
+            last_request_goal=None,
+            history=[],
+            thread_id=thread_id,
+            resume_from_checkpoint=True,
+        )
+
+        assert isinstance(result, workflow.AssistantResponseBundle)
+        assert result.rule == "Recovered checkpoint answer."
+        assert calls["analyze_request"] == 1
+        assert calls["retrieve_supporting_context"] == 1
+        assert calls["extract_claims"] == 2
+        assert calls["extract_structured_draft"] == 1
+        assert calls["generate_decision_support"] == 1
+        assert calls["reflect_on_final_answer"] == 1
+        assert calls["generate_query"] == 1
+        assert calls["search_images"] == 1
+    finally:
+        reset_compiled_graph()
 
 
 def _patch_in_scope_graph_dependencies(monkeypatch, *, reflections):

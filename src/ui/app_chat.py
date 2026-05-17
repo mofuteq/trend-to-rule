@@ -84,6 +84,14 @@ def render_retrieved_results(retrieval: RetrievalBundle) -> None:
         )
 
 
+def render_response_artifacts(response: ChatResponse) -> None:
+    """Render non-text artifacts carried by a completed chat response."""
+    assistant_response = response.assistant_response
+    if assistant_response.request_analysis.is_in_scope:
+        render_image_results(assistant_response.image_results)
+    render_retrieved_results(assistant_response.retrieval)
+
+
 def stream_markdown_text(text: str) -> None:
     """Stream markdown text into the current chat message placeholder.
 
@@ -103,7 +111,13 @@ def sync_rendered_turn(response: ChatResponse) -> None:
         {"role": "user", "content": response.message},
         {"role": "assistant", "content": response.assistant_response.rule},
     ]
-    st.session_state.messages.extend(turn_messages)
+    if st.session_state.messages[-2:] != turn_messages and (
+        st.session_state.messages
+        and st.session_state.messages[-1] == turn_messages[0]
+    ):
+        st.session_state.messages.append(turn_messages[1])
+    elif st.session_state.messages[-2:] != turn_messages:
+        st.session_state.messages.extend(turn_messages)
     st.session_state.chat_turn = response.chat_turn
     st.session_state.last_request_goal = (
         response.assistant_response.request_analysis.request_goal
@@ -136,7 +150,6 @@ def process_user_prompt(
             )
             assistant_response = response.assistant_response
             request_analysis = assistant_response.request_analysis
-            retrieval = assistant_response.retrieval
             assistant_rule = assistant_response.rule
             st.write(request_analysis)
             if not request_analysis.is_in_scope:
@@ -152,9 +165,7 @@ def process_user_prompt(
                 )
 
         stream_markdown_text(assistant_rule)
-        if request_analysis.is_in_scope:
-            render_image_results(assistant_response.image_results)
-        render_retrieved_results(retrieval)
+        render_response_artifacts(response)
 
     sync_rendered_turn(response)
 
