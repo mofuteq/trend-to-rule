@@ -289,6 +289,13 @@ updates. Streamlit is now a UI client for chat rendering and user interaction.
 The backend process uses the same local `.data/` storage paths configured in
 `src/.env`.
 
+FastAPI also persists workflow run metadata per chat turn. Failed or interrupted
+turns can be resumed with `POST /chats/{chat_id}/resume`, which reuses the saved
+LangGraph `thread_id` for that chat turn. Resume is checkpoint-backed and
+node-level: a node may be retried if it failed before its checkpoint was saved.
+Langfuse remains responsible for trace inspection; RepoA only handles execution
+resume.
+
 Terminal 1: launch the FastAPI backend with uvicorn:
 
 ```bash
@@ -301,8 +308,8 @@ Terminal 2: launch the Streamlit UI against that backend:
 T2R_API_BASE_URL=http://localhost:8000 uv run streamlit run src/app.py
 ```
 
-Resume support, streaming, authentication, job queues, and Docker Compose remain
-outside the current runtime boundary.
+Streaming, authentication, job queues, and Docker Compose remain outside the
+current runtime boundary.
 
 ## Run With Docker
 

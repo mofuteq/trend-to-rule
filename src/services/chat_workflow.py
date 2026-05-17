@@ -655,6 +655,7 @@ def generate_assistant_response(
     last_request_goal: str | None,
     history: list[ModelMessage] | None,
     thread_id: str | None = None,
+    resume_from_checkpoint: bool = False,
     langfuse_session_id: str | None = None,
     langfuse_user_id: str | None = None,
 ) -> AssistantResponseBundle:
@@ -667,18 +668,22 @@ def generate_assistant_response(
         history: Prior chat history.
         thread_id: LangGraph checkpoint thread id; one is generated when omitted
             so each invocation starts from a clean state.
+        resume_from_checkpoint: Continue from the saved checkpoint for
+            ``thread_id`` instead of starting from a fresh input state.
         langfuse_session_id: Chat session id used only for Langfuse grouping.
         langfuse_user_id: User id used only for Langfuse grouping.
 
     Returns:
         AssistantResponseBundle: Claims, draft, final rule, and related images.
     """
-    initial_state = AssistantResponseState(
-        user_prompt=user_prompt,
-        config=config,
-        last_request_goal=last_request_goal,
-        history=history,
-    )
+    initial_state = None
+    if not resume_from_checkpoint:
+        initial_state = AssistantResponseState(
+            user_prompt=user_prompt,
+            config=config,
+            last_request_goal=last_request_goal,
+            history=history,
+        )
     resolved_thread_id = thread_id or str(uuid.uuid4())
     tags = [*tracing.get_repoa_trace_tags(), "chat_workflow", "langgraph"]
     metadata = {

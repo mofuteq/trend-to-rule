@@ -39,6 +39,7 @@ def run_chat_turn(
     last_request_goal: str | None = None,
     history: list[ModelMessage] | None = None,
     thread_id: str | None = None,
+    resume_from_checkpoint: bool = False,
 ) -> ChatTurnResult:
     """Run one chat turn through the existing LangGraph workflow.
 
@@ -71,6 +72,7 @@ def run_chat_turn(
         last_request_goal=last_request_goal,
         history=history,
         thread_id=resolved_thread_id,
+        resume_from_checkpoint=resume_from_checkpoint,
         langfuse_session_id=chat_id,
         langfuse_user_id=user_id,
     )
@@ -195,4 +197,3 @@ def _update_chat_turn_trace_output(
             },
         },
     )
-

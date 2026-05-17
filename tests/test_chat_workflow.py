@@ -102,6 +102,39 @@ def _retrieval_with_evidence() -> workflow.RetrievalBundle:
     )
 
 
+def test_generate_assistant_response_resume_invokes_checkpoint_without_new_input(
+    monkeypatch,
+    tmp_path,
+):
+    config = _make_config(tmp_path)
+    captured = {}
+
+    class FakeGraph:
+        def invoke(self, graph_input, invoke_config):
+            captured["graph_input"] = graph_input
+            captured["invoke_config"] = invoke_config
+            return {
+                "request_analysis": _request_analysis(in_scope=True),
+                "retrieval": workflow._empty_retrieval_bundle(),
+                "rule": "Resumed response.",
+            }
+
+    monkeypatch.setattr(workflow, "_get_compiled_graph", lambda config: FakeGraph())
+
+    result = workflow.generate_assistant_response(
+        user_prompt="Resume this turn",
+        config=config,
+        last_request_goal="previous goal",
+        history=[],
+        thread_id="chat-123:2",
+        resume_from_checkpoint=True,
+    )
+
+    assert result.rule == "Resumed response."
+    assert captured["graph_input"] is None
+    assert captured["invoke_config"]["configurable"]["thread_id"] == "chat-123:2"
+
+
 def _patch_in_scope_graph_dependencies(monkeypatch, *, reflections):
     calls = {
         "generate_decision_support": [],

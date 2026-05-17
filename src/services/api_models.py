@@ -68,6 +68,14 @@ class ChatRequest(BaseModel):
     workspace_id: str | None = None
 
 
+class ResumeChatRequest(BaseModel):
+    """Resume the latest checkpoint-backed workflow run for a chat."""
+
+    workspace_id: str | None = None
+    chat_turn: int | None = None
+    thread_id: str | None = None
+
+
 class ChatResponse(BaseModel):
     """Chat response data needed by a UI to render the assistant turn."""
 
