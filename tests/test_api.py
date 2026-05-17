@@ -269,6 +269,9 @@ def test_chat_endpoint_stores_workflow_metadata_running_then_completed(
         running_meta.update(
             api.get_api_chat_db().get("chat-meta", config.chat_meta_db_name)
         )
+        assert api.get_api_chat_db().get("workspace-a", config.user_db_name) == [
+            "chat-meta"
+        ]
         return ChatTurnResult(
             chat_id=kwargs["chat_id"],
             user_id=kwargs["user_id"],
@@ -338,6 +341,7 @@ def test_chat_endpoint_stores_failed_workflow_metadata(monkeypatch, tmp_path):
     assert meta["latest_workflow_error"] == "workflow exploded before completion"
     assert meta["latest_workflow_completed_at_ts"] is None
     assert meta["latest_workflow_message"] == "This will fail"
+    assert chat_db.get("workspace-a", config.user_db_name) == ["chat-fail"]
 
 
 def test_resume_endpoint_returns_non_resumable_without_failed_or_running_run(

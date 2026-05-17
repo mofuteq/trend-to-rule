@@ -283,6 +283,12 @@ def chat(request: ChatRequest) -> ChatResponse:
     )
     chat_turn = session.next_chat_turn
     thread_id = _workflow_thread_id(request.chat_id, chat_turn)
+    ensure_user_chat_id(
+        user_id=workspace_id,
+        chat_id=request.chat_id,
+        chat_db=chat_db,
+        user_db_name=CONFIG.user_db_name,
+    )
     _mark_workflow_running(
         chat_id=request.chat_id,
         chat_turn=chat_turn,
