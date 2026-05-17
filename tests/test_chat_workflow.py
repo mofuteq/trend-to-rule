@@ -102,6 +102,21 @@ def _retrieval_with_evidence() -> workflow.RetrievalBundle:
     )
 
 
+def test_build_checkpointer_allows_repoa_checkpoint_models(tmp_path):
+    checkpointer = workflow._build_checkpointer(_make_config(tmp_path))
+
+    try:
+        assert checkpointer is not None
+        allowed_modules = checkpointer.serde._allowed_msgpack_modules
+        assert ("core.models", "RequestAnalysis") in allowed_modules
+        assert ("services.chat_workflow", "RetrievalBundle") in allowed_modules
+        assert ("core.app_config", "AppConfig") in allowed_modules
+    finally:
+        if workflow._CHECKPOINTER_CONN is not None:
+            workflow._CHECKPOINTER_CONN.close()
+            workflow._CHECKPOINTER_CONN = None
+
+
 def test_generate_assistant_response_resume_invokes_checkpoint_without_new_input(
     monkeypatch,
     tmp_path,

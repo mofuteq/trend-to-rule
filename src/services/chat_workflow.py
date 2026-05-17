@@ -6,6 +6,7 @@ import threading
 import uuid
 
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic_ai.messages import ModelMessage
@@ -71,6 +72,22 @@ FINAL_ANSWER_RUBRIC_BOOLEAN_FIELDS = (
     "flows_as_continuous_prose",
     "avoids_listicle_style",
     "preserves_logical_completeness",
+)
+CHECKPOINT_ALLOWED_MSGPACK_MODULES = (
+    AppConfig,
+    ExampleQuerySpec,
+    FinalAnswerRubric,
+    RequestAnalysis,
+    StructuredClaims,
+    StructuredDraft,
+    WebSource,
+    ImageSearchResult,
+    ("pydantic_ai.messages", "ModelRequest"),
+    ("pydantic_ai.messages", "ModelResponse"),
+    ("pydantic_ai.messages", "TextPart"),
+    ("pydantic_ai.messages", "UserPromptPart"),
+    ("services.chat_workflow", "AssistantResponseState"),
+    ("services.chat_workflow", "RetrievalBundle"),
 )
 
 
@@ -613,7 +630,12 @@ def _build_checkpointer(config: AppConfig) -> SqliteSaver | None:
             check_same_thread=False,
         )
         _CHECKPOINTER_CONN = conn
-        saver = SqliteSaver(_CHECKPOINTER_CONN)
+        saver = SqliteSaver(
+            _CHECKPOINTER_CONN,
+            serde=JsonPlusSerializer(
+                allowed_msgpack_modules=CHECKPOINT_ALLOWED_MSGPACK_MODULES,
+            ),
+        )
         saver.setup()
         logger.info(
             "LangGraph checkpoints persisted to SQLite at %s",
