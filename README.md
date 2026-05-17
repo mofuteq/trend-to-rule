@@ -125,7 +125,9 @@ source. No local embedding model is required for the default runtime.
 
 ```mermaid
 flowchart TD
-    E[Streamlit app.py] --> W[chat_workflow LangGraph]
+    E[Streamlit app.py] --> API[FastAPI HTTP API]
+    API --> RT[shared chat runtime]
+    RT --> W[chat_workflow LangGraph]
     W --> A[analyze_request]
     A --> R{route_by_scope}
     R -->|out of scope| OOS[out_of_scope_response]
@@ -140,13 +142,20 @@ flowchart TD
     GDS --> GQ[generate_query]
     GQ --> RIQ[render_image_query]
     RIQ --> SI[Tavily image search]
-    SI --> E
+    SI --> API
+    API --> E
 
     subgraph Observability
       LF[Langfuse Cloud tracing]
     end
+    API --> LF
     W --> LF
 ```
+
+The FastAPI boundary is implemented in [`src/api.py`](./src/api.py). It owns
+chat execution, chat loading, chat listing, chat deletion, chat turn numbering,
+durable chat history and metadata updates, title generation, workspace chat-id
+updates, and the call into the shared chat runtime.
 
 The LangGraph workflow is implemented in
 [`src/services/chat_workflow.py`](./src/services/chat_workflow.py). It keeps
@@ -230,6 +239,7 @@ TAVILY_INCLUDE_IMAGE_DESCRIPTIONS=true
 
 CHAT_DB_PATH=.data/chat_db
 T2R_DEFAULT_WORKSPACE=demo
+T2R_API_BASE_URL=http://localhost:8000
 APP_LOG_LEVEL=INFO
 APP_ENV=development
 
@@ -267,34 +277,64 @@ Key settings:
   key is empty.
 - `LANGGRAPH_SQLITE_PATH`: local SQLite file for LangGraph checkpoints.
   Default: `.data/langgraph/checkpoints.sqlite`.
+- `T2R_API_BASE_URL`: FastAPI backend URL used by the Streamlit UI.
+  Default: `http://localhost:8000`.
 
 ## Run Locally
 
-Launch the Streamlit app with uv:
+FastAPI owns chat execution and persisted chat management: workflow invocation,
+chat loading, chat listing, chat deletion, turn numbering, chat history
+persistence, `last_request_goal`, title generation, and workspace chat-id
+updates. Streamlit is now a UI client for chat rendering and user interaction.
+The backend process uses the same local `.data/` storage paths configured in
+`src/.env`.
+
+Terminal 1: launch the FastAPI backend with uvicorn:
 
 ```bash
-uv run streamlit run src/app.py
+uv run uvicorn src.api:app --reload --host 0.0.0.0 --port 8000
 ```
+
+Terminal 2: launch the Streamlit UI against that backend:
+
+```bash
+T2R_API_BASE_URL=http://localhost:8000 uv run streamlit run src/app.py
+```
+
+Resume support, streaming, authentication, job queues, and Docker Compose remain
+outside the current runtime boundary.
 
 ## Run With Docker
 
-Build the standalone app image:
+Run the local two-container setup with the helper script:
 
 ```bash
-docker build -f src/Dockerfile -t trend-to-rule .
+scripts/run-local-containers.sh start
 ```
 
-Run the Streamlit app:
+The script builds one shared Docker image and starts two containers from it:
+
+- `trend-to-rule-api`: FastAPI on `http://localhost:8000`
+- `trend-to-rule-ui`: Streamlit on `http://localhost:8501`
+
+The FastAPI container owns chat execution and persisted chat management. It
+mounts the local `.data/` directory at `/app/.data`. The Streamlit container is
+started with `T2R_API_BASE_URL=http://trend-to-rule-api:8000` and stays a UI
+client.
+
+Useful commands:
 
 ```bash
-docker run --rm \
-  --env-file src/.env \
-  -p 8501:8501 \
-  -v "$(pwd)/.data:/app/.data" \
-  trend-to-rule
+scripts/run-local-containers.sh status
+scripts/run-local-containers.sh logs
+scripts/run-local-containers.sh stop
 ```
 
-The app is available at `http://localhost:8501`.
+Override ports when needed:
+
+```bash
+T2R_API_PORT=18000 T2R_UI_PORT=18501 scripts/run-local-containers.sh start
+```
 
 ## Observability
 
@@ -303,7 +343,7 @@ and OSS demos. Set `LANGFUSE_BASE_URL="https://cloud.langfuse.com"` with a
 Langfuse Cloud public/secret key pair in `src/.env`; tracing activates
 automatically when both keys are present.
 
-Each Streamlit chat turn is captured as a single `chat_turn` trace with native
+Each FastAPI chat turn is captured as a single `chat_turn` trace with native
 LangGraph callback events. In-scope requests show `analyze_request`,
 `route_by_scope`, `retrieve_supporting_context`, and the RAR nodes.
 Out-of-scope requests show `analyze_request`, `route_by_scope`, and

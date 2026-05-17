@@ -14,6 +14,7 @@ def test_load_app_config_parses_tavily_settings(monkeypatch, tmp_path):
     monkeypatch.setenv("TAVILY_IMAGE_FETCH_LIMIT", "8")
     monkeypatch.setenv("TAVILY_IMAGE_LIMIT", "4")
     monkeypatch.setenv("TAVILY_INCLUDE_IMAGE_DESCRIPTIONS", "off")
+    monkeypatch.setenv("T2R_API_BASE_URL", "http://api.local:9000")
 
     config = load_app_config()
 
@@ -24,3 +25,4 @@ def test_load_app_config_parses_tavily_settings(monkeypatch, tmp_path):
     assert config.tavily_image_fetch_limit == 8
     assert config.tavily_image_limit == 4
     assert config.tavily_include_image_descriptions is False
+    assert config.api_base_url == "http://api.local:9000"

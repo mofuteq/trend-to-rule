@@ -36,6 +36,7 @@ def _make_config(tmp_path: Path) -> AppConfig:
         langgraph_sqlite_path=tmp_path / "checkpoints.sqlite",
         workspace_query_key="workspace",
         default_workspace_key="demo",
+        api_base_url="http://localhost:8000",
     )
 
 
