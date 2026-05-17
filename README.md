@@ -306,23 +306,35 @@ outside the current runtime boundary.
 
 ## Run With Docker
 
-Build the standalone app image:
+Run the local two-container setup with the helper script:
 
 ```bash
-docker build -f src/Dockerfile -t trend-to-rule .
+scripts/run-local-containers.sh start
 ```
 
-Run the Streamlit app:
+The script builds one shared Docker image and starts two containers from it:
+
+- `trend-to-rule-api`: FastAPI on `http://localhost:8000`
+- `trend-to-rule-ui`: Streamlit on `http://localhost:8501`
+
+The FastAPI container owns chat execution and persisted chat management. It
+mounts the local `.data/` directory at `/app/.data`. The Streamlit container is
+started with `T2R_API_BASE_URL=http://trend-to-rule-api:8000` and stays a UI
+client.
+
+Useful commands:
 
 ```bash
-docker run --rm \
-  --env-file src/.env \
-  -p 8501:8501 \
-  -v "$(pwd)/.data:/app/.data" \
-  trend-to-rule
+scripts/run-local-containers.sh status
+scripts/run-local-containers.sh logs
+scripts/run-local-containers.sh stop
 ```
 
-The app is available at `http://localhost:8501`.
+Override ports when needed:
+
+```bash
+T2R_API_PORT=18000 T2R_UI_PORT=18501 scripts/run-local-containers.sh start
+```
 
 ## Observability
 
