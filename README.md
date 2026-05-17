@@ -152,10 +152,15 @@ flowchart TD
     W --> LF
 ```
 
+
 The FastAPI boundary is implemented in [`src/api.py`](./src/api.py). It owns
 chat execution, chat loading, chat listing, chat deletion, chat turn numbering,
 durable chat history and metadata updates, title generation, workspace chat-id
 updates, and the call into the shared chat runtime.
+
+Streamlit is intentionally treated as a replaceable UI surface. It renders chat
+history, visual references, and evidence tables, but the agent runtime and
+persisted execution state live behind the FastAPI boundary.
 
 The LangGraph workflow is implemented in
 [`src/services/chat_workflow.py`](./src/services/chat_workflow.py). It keeps
@@ -169,8 +174,30 @@ In-scope runs log text evidence metadata to Langfuse:
 - `emerging_source_count`
 - `total_source_count`
 
+
 Out-of-scope requests do not run `retrieve_supporting_context` and do not call
 Tavily text search.
+
+## Runtime Resilience
+
+A useful agent should not only answer; it should survive interruption.
+
+Each chat turn uses a deterministic LangGraph `thread_id` based on the chat id
+and turn number. FastAPI persists workflow run metadata for every turn,
+including whether the run is `running`, `completed`, or `failed`. LangGraph
+persists node-level checkpoints to SQLite, so an unfinished workflow can resume
+from the saved checkpoint by reusing the same `thread_id`.
+
+If the browser is closed or the Streamlit UI is reopened while a workflow is
+unfinished, the UI can discover the unfinished run through the chat API and
+automatically resume it. The resume path is execution control, not trace
+inspection: FastAPI stores run metadata and exposes the resume endpoint,
+LangGraph stores checkpointed workflow state, Streamlit remains a replaceable UI
+surface, and Langfuse remains responsible for inspecting what happened.
+
+Resume is node-level. If a node failed before its checkpoint was saved, that
+node may be retried; completed checkpointed nodes can be skipped by the resumed
+workflow.
 
 ## Directory Layout
 
@@ -282,19 +309,13 @@ Key settings:
 
 ## Run Locally
 
-FastAPI owns chat execution and persisted chat management: workflow invocation,
-chat loading, chat listing, chat deletion, turn numbering, chat history
-persistence, `last_request_goal`, title generation, and workspace chat-id
-updates. Streamlit is now a UI client for chat rendering and user interaction.
-The backend process uses the same local `.data/` storage paths configured in
-`src/.env`.
 
-FastAPI also persists workflow run metadata per chat turn. Failed or interrupted
-turns can be resumed with `POST /chats/{chat_id}/resume`, which reuses the saved
-LangGraph `thread_id` for that chat turn. Resume is checkpoint-backed and
-node-level: a node may be retried if it failed before its checkpoint was saved.
-Langfuse remains responsible for trace inspection; RepoA only handles execution
-resume.
+FastAPI owns chat execution and persisted chat management: workflow invocation,
+chat loading, chat listing, chat deletion, turn numbering, chat history,
+workflow run metadata, `last_request_goal`, title generation, and workspace
+chat-id updates. Streamlit is a UI client for chat rendering and user
+interaction. The backend process uses the same local `.data/` storage paths
+configured in `src/.env`.
 
 Terminal 1: launch the FastAPI backend with uvicorn:
 
@@ -345,9 +366,10 @@ T2R_API_PORT=18000 T2R_UI_PORT=18501 scripts/run-local-containers.sh start
 
 ## Observability
 
-`trend-to-rule` uses Langfuse Cloud as the default observability backend for development
-and OSS demos. Set `LANGFUSE_BASE_URL="https://cloud.langfuse.com"` with a
-Langfuse Cloud public/secret key pair in `src/.env`; tracing activates
+
+`trend-to-rule` uses Langfuse Cloud as the default observability backend for
+development and OSS demos. Set `LANGFUSE_BASE_URL=https://cloud.langfuse.com`
+with a Langfuse Cloud public/secret key pair in `src/.env`; tracing activates
 automatically when both keys are present.
 
 Each FastAPI chat turn is captured as a single `chat_turn` trace with native
