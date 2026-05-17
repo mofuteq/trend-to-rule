@@ -600,6 +600,7 @@ def _chat_session_response(
     workspace_id: str,
     session: LoadedChatSession,
 ) -> ChatSessionResponse:
+    latest_chat_turn = session.meta.get("latest_chat_turn")
     return ChatSessionResponse(
         chat_id=chat_id,
         workspace_id=workspace_id,
@@ -607,4 +608,10 @@ def _chat_session_response(
         title=str(session.meta.get("title") or ""),
         last_request_goal=session.last_request_goal,
         chat_turn=max(0, session.next_chat_turn - 1),
+        latest_workflow_status=str(session.meta.get("latest_workflow_status") or ""),
+        latest_chat_turn=(
+            latest_chat_turn if isinstance(latest_chat_turn, int) else None
+        ),
+        latest_thread_id=str(session.meta.get("latest_thread_id") or ""),
+        latest_workflow_error=str(session.meta.get("latest_workflow_error") or ""),
     )

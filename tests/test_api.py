@@ -100,7 +100,15 @@ def test_list_chats_endpoint_returns_workspace_summaries(monkeypatch, tmp_path):
     )
     chat_db.put(
         "newer",
-        {"title": "Newer chat", "updated_at_ts": 20.0, "chat_turn": 1},
+        {
+            "title": "Newer chat",
+            "updated_at_ts": 20.0,
+            "chat_turn": 1,
+            "latest_workflow_status": "failed",
+            "latest_chat_turn": 2,
+            "latest_thread_id": "newer:2",
+            "latest_workflow_error": "temporary failure",
+        },
         config.chat_meta_db_name,
     )
     client = TestClient(api.app)
@@ -111,8 +119,24 @@ def test_list_chats_endpoint_returns_workspace_summaries(monkeypatch, tmp_path):
     assert response.json() == {
         "workspace_id": "workspace-a",
         "chats": [
-            {"chat_id": "newer", "title": "Newer chat", "updated_at_ts": 20.0},
-            {"chat_id": "older", "title": "Older chat", "updated_at_ts": 10.0},
+            {
+                "chat_id": "newer",
+                "title": "Newer chat",
+                "updated_at_ts": 20.0,
+                "latest_workflow_status": "failed",
+                "latest_chat_turn": 2,
+                "latest_thread_id": "newer:2",
+                "latest_workflow_error": "temporary failure",
+            },
+            {
+                "chat_id": "older",
+                "title": "Older chat",
+                "updated_at_ts": 10.0,
+                "latest_workflow_status": "",
+                "latest_chat_turn": None,
+                "latest_thread_id": "",
+                "latest_workflow_error": "",
+            },
         ],
     }
 
@@ -135,6 +159,10 @@ def test_get_chat_endpoint_returns_messages_and_metadata(monkeypatch, tmp_path):
             "last_request_goal": "read goal",
             "chat_turn": 1,
             "updated_at_ts": 30.0,
+            "latest_workflow_status": "running",
+            "latest_chat_turn": 2,
+            "latest_thread_id": "chat-read:2",
+            "latest_workflow_error": "",
         },
         config.chat_meta_db_name,
     )
@@ -156,6 +184,10 @@ def test_get_chat_endpoint_returns_messages_and_metadata(monkeypatch, tmp_path):
         "title": "Read title",
         "last_request_goal": "read goal",
         "chat_turn": 1,
+        "latest_workflow_status": "running",
+        "latest_chat_turn": 2,
+        "latest_thread_id": "chat-read:2",
+        "latest_workflow_error": "",
     }
 
 
@@ -191,7 +223,15 @@ def test_delete_chat_endpoint_removes_chat_and_workspace_entry(monkeypatch, tmp_
         "workspace_id": "workspace-a",
         "remaining_chat_ids": ["keep-chat"],
         "chats": [
-            {"chat_id": "keep-chat", "title": "Keep", "updated_at_ts": 20.0},
+            {
+                "chat_id": "keep-chat",
+                "title": "Keep",
+                "updated_at_ts": 20.0,
+                "latest_workflow_status": "",
+                "latest_chat_turn": None,
+                "latest_thread_id": "",
+                "latest_workflow_error": "",
+            },
         ],
     }
     assert chat_db.get("delete-chat", config.chat_db_name) is None

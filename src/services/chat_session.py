@@ -154,28 +154,28 @@ def sort_chat_ids_by_last_updated(
     chat_ids: list[str],
     chat_db: ChatDB,
     chat_meta_db_name: str,
-) -> tuple[list[str], dict[str, float], dict[str, str]]:
+) -> tuple[list[str], dict[str, float], dict[str, dict]]:
     """Sort chat ids by last updated timestamp in descending order."""
     updated_at_by_chat: dict[str, float] = {}
-    title_by_chat: dict[str, str] = {}
+    meta_by_chat: dict[str, dict] = {}
     for chat_id in chat_ids:
         meta = get_chat_meta(
             chat_id=chat_id,
             chat_db=chat_db,
             chat_meta_db_name=chat_meta_db_name,
         )
+        meta_by_chat[chat_id] = meta
         updated_at_ts = meta.get("updated_at_ts")
         updated_at_by_chat[chat_id] = (
             float(updated_at_ts) if isinstance(updated_at_ts, (int, float)) else 0.0
         )
-        title_by_chat[chat_id] = str(meta.get("title") or "").strip()
 
     sorted_chat_ids = sorted(
         chat_ids,
         key=lambda chat_id: updated_at_by_chat.get(chat_id, 0.0),
         reverse=True,
     )
-    return sorted_chat_ids, updated_at_by_chat, title_by_chat
+    return sorted_chat_ids, updated_at_by_chat, meta_by_chat
 
 
 def list_chat_summaries(
@@ -191,23 +191,35 @@ def list_chat_summaries(
         chat_db=chat_db,
         user_db_name=user_db_name,
     )
-    sorted_chat_ids, updated_at_by_chat, title_by_chat = sort_chat_ids_by_last_updated(
+    sorted_chat_ids, updated_at_by_chat, meta_by_chat = sort_chat_ids_by_last_updated(
         chat_ids=chat_ids,
         chat_db=chat_db,
         chat_meta_db_name=chat_meta_db_name,
     )
-    return [
-        {
-            "chat_id": chat_id,
-            "title": title_by_chat.get(chat_id, ""),
-            "updated_at_ts": (
-                updated_at_by_chat[chat_id]
-                if updated_at_by_chat.get(chat_id, 0.0) > 0
-                else None
-            ),
-        }
-        for chat_id in sorted_chat_ids
-    ]
+    summaries: list[dict[str, object]] = []
+    for chat_id in sorted_chat_ids:
+        meta = meta_by_chat.get(chat_id, {})
+        latest_chat_turn = meta.get("latest_chat_turn")
+        summaries.append(
+            {
+                "chat_id": chat_id,
+                "title": str(meta.get("title") or "").strip(),
+                "updated_at_ts": (
+                    updated_at_by_chat[chat_id]
+                    if updated_at_by_chat.get(chat_id, 0.0) > 0
+                    else None
+                ),
+                "latest_workflow_status": str(
+                    meta.get("latest_workflow_status") or ""
+                ),
+                "latest_chat_turn": (
+                    latest_chat_turn if isinstance(latest_chat_turn, int) else None
+                ),
+                "latest_thread_id": str(meta.get("latest_thread_id") or ""),
+                "latest_workflow_error": str(meta.get("latest_workflow_error") or ""),
+            }
+        )
+    return summaries
 
 
 def get_chat_meta(chat_id: str, chat_db: ChatDB, chat_meta_db_name: str) -> dict:

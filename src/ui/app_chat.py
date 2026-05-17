@@ -103,7 +103,13 @@ def sync_rendered_turn(response: ChatResponse) -> None:
         {"role": "user", "content": response.message},
         {"role": "assistant", "content": response.assistant_response.rule},
     ]
-    st.session_state.messages.extend(turn_messages)
+    if st.session_state.messages[-2:] != turn_messages and (
+        st.session_state.messages
+        and st.session_state.messages[-1] == turn_messages[0]
+    ):
+        st.session_state.messages.append(turn_messages[1])
+    elif st.session_state.messages[-2:] != turn_messages:
+        st.session_state.messages.extend(turn_messages)
     st.session_state.chat_turn = response.chat_turn
     st.session_state.last_request_goal = (
         response.assistant_response.request_analysis.request_goal
