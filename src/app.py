@@ -15,7 +15,7 @@ from services.api_client import (
 from ui.app_sidebar import setup_chat_selector
 from ui.app_chat import render_chat_input, render_history, sync_rendered_turn
 from ui.app_state import (
-    find_latest_resumable_chat_id,
+    choose_initial_chat_id,
     get_workspace_user_id,
     has_attempted_auto_resume,
     init_session_state,
@@ -60,9 +60,9 @@ def main() -> None:
         config=CONFIG,
     ).chats
     if not st.session_state.chat_id:
-        resumable_chat_id = find_latest_resumable_chat_id(chat_summaries)
-        if resumable_chat_id:
-            start_new_chat_session(chat_id=resumable_chat_id)
+        initial_chat_id = choose_initial_chat_id(chat_summaries)
+        if initial_chat_id:
+            start_new_chat_session(chat_id=initial_chat_id)
         else:
             created_chat = create_chat(
                 workspace_id=user_id,
@@ -187,8 +187,13 @@ def maybe_auto_resume_active_chat(*, user_id: str, config) -> None:
         return
 
     sync_rendered_turn(response)
-    st.session_state.latest_workflow_status = "completed"
-    st.session_state.latest_workflow_error = ""
+    sync_active_chat_session(
+        get_chat(
+            chat_id=st.session_state.chat_id,
+            workspace_id=user_id,
+            config=config,
+        )
+    )
 
 
 if __name__ == "__main__":

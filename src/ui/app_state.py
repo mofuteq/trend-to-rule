@@ -123,6 +123,16 @@ def find_latest_resumable_chat_id(chat_summaries: list[ChatSummary]) -> str:
     return ""
 
 
+def choose_initial_chat_id(chat_summaries: list[ChatSummary]) -> str:
+    """Choose the initial chat when opening the UI without active session state."""
+    resumable_chat_id = find_latest_resumable_chat_id(chat_summaries)
+    if resumable_chat_id:
+        return resumable_chat_id
+    if chat_summaries:
+        return chat_summaries[0].chat_id
+    return ""
+
+
 def is_resumable_workflow_status(status: str) -> bool:
     """Return True when a workflow status can be auto-resumed."""
     return status in RESUMABLE_WORKFLOW_STATUSES
