@@ -35,8 +35,9 @@ The architecture is domain-agnostic. Wherever short-term signals can obscure
 long-term structure — product strategy, content selection, capital allocation,
 or other taste-driven domains — the same pattern applies.
 
-See [`examples/sample-output.md`](./examples/sample-output.md) for a full run on
-a fashion query.
+Start with the [sample output guide](./examples/README.md) for full pipeline
+runs. The examples are split by question shape: a current trend explanation,
+an advice-shaped wardrobe question, and a historical evolution query.
 
 **RAR** means **Retrieval Augmented Reasoning**: retrieval is treated as part of
 the reasoning workflow rather than passive context lookup.
@@ -203,6 +204,7 @@ workflow.
 
 ```text
 trend-to-rule/
+├── examples/
 ├── src/
 │   ├── app.py
 │   ├── Dockerfile
@@ -217,6 +219,8 @@ trend-to-rule/
 └── README.md
 ```
 
+- `examples/`: full pipeline sample outputs, with an index for the recommended
+  reading path.
 - `src/core/`: runtime config, domain models, text/query helpers.
 - `src/services/web_search.py`: Tavily text evidence search and `WebSource`
   normalization.
