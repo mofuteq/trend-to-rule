@@ -110,6 +110,38 @@ def test_get_chat_parses_response(monkeypatch, tmp_path):
                 "title": "Chat one",
                 "last_request_goal": "goal",
                 "chat_turn": 1,
+                "turn_artifacts": {
+                    "1": {
+                        "chat_turn": 1,
+                        "image_results": [
+                            {
+                                "title": "Visual reference",
+                                "page_url": "https://example.test/page",
+                                "image_url": "https://example.test/image.jpg",
+                                "thumbnail_url": "https://example.test/thumb.jpg",
+                                "source": "fixture",
+                                "engine": "fixture",
+                            }
+                        ],
+                        "retrieval": {
+                            "canonical_context": "",
+                            "emerging_context": "",
+                            "canonical_rows": [
+                                {
+                                    "source_id": "C01",
+                                    "title": "Canonical source",
+                                    "url": "https://example.test/canonical",
+                                    "published_at": "2026-01-01",
+                                    "provider": "tavily",
+                                }
+                            ],
+                            "emerging_rows": [],
+                        },
+                        "image_query": "visual query",
+                        "request_goal": "goal",
+                        "is_in_scope": True,
+                    }
+                },
             }
         },
     )
@@ -123,6 +155,10 @@ def test_get_chat_parses_response(monkeypatch, tmp_path):
     assert response.chat_id == "chat-1"
     assert response.messages[0].content == "Hello"
     assert response.last_request_goal == "goal"
+    assert response.turn_artifacts["1"].image_results[0].title == "Visual reference"
+    assert response.turn_artifacts["1"].retrieval.canonical_rows[0]["url"] == (
+        "https://example.test/canonical"
+    )
     assert calls == [
         {"base_url": "http://api.test", "timeout": 120.0},
         {

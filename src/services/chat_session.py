@@ -13,9 +13,11 @@ from pydantic_ai.messages import (
 )
 
 from core.app_config import AppConfig
+from services.api_models import PersistedTurnArtifacts
 from storage.chat_db import ChatDB
 
 ChatMessage = dict[str, str]
+TURN_ARTIFACTS_META_KEY = "turn_artifacts"
 
 
 @dataclass(frozen=True)
@@ -250,6 +252,55 @@ def update_chat_meta(
         db_name=chat_meta_db_name,
     )
     return meta
+
+
+def normalize_turn_artifacts(
+    raw_artifacts: object,
+) -> dict[str, PersistedTurnArtifacts]:
+    """Return valid persisted turn artifacts keyed by chat turn string."""
+    if not isinstance(raw_artifacts, dict):
+        return {}
+    artifacts: dict[str, PersistedTurnArtifacts] = {}
+    for raw_value in raw_artifacts.values():
+        try:
+            artifact = PersistedTurnArtifacts.model_validate(raw_value)
+        except Exception:
+            continue
+        artifacts[str(artifact.chat_turn)] = artifact
+    return artifacts
+
+
+def load_turn_artifacts(meta: dict[str, Any]) -> dict[str, PersistedTurnArtifacts]:
+    """Load persisted display artifacts from chat metadata."""
+    return normalize_turn_artifacts(meta.get(TURN_ARTIFACTS_META_KEY))
+
+
+def persist_turn_artifacts(
+    *,
+    chat_id: str,
+    artifacts: PersistedTurnArtifacts,
+    chat_db: ChatDB,
+    chat_meta_db_name: str,
+) -> dict[str, PersistedTurnArtifacts]:
+    """Persist display artifacts for one completed turn, replacing that turn."""
+    meta = get_chat_meta(
+        chat_id=chat_id,
+        chat_db=chat_db,
+        chat_meta_db_name=chat_meta_db_name,
+    )
+    turn_artifacts = load_turn_artifacts(meta)
+    turn_artifacts[str(artifacts.chat_turn)] = artifacts
+    serialized_artifacts = {
+        turn_key: turn_artifact.model_dump(mode="json")
+        for turn_key, turn_artifact in turn_artifacts.items()
+    }
+    update_chat_meta(
+        chat_id=chat_id,
+        chat_db=chat_db,
+        chat_meta_db_name=chat_meta_db_name,
+        updates={TURN_ARTIFACTS_META_KEY: serialized_artifacts},
+    )
+    return turn_artifacts
 
 
 def set_last_request_goal(

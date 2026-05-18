@@ -5,10 +5,12 @@ from pydantic_ai.messages import ModelRequest, ModelResponse
 
 import api
 from core.app_config import AppConfig
-from core.models import RequestAnalysis, SearchQuery
+from core.models import RequestAnalysis, SearchQuery, WebSource
+from services.api_models import PersistedTurnArtifacts
 from services.chat_runtime import ChatTurnResult
 from services.chat_session import open_chat_db
-from services.chat_workflow import AssistantResponseBundle
+from services.chat_workflow import AssistantResponseBundle, RetrievalBundle
+from services.image_search import ImageSearchResult
 
 
 def _make_config(tmp_path: Path) -> AppConfig:
@@ -32,7 +34,71 @@ def _make_config(tmp_path: Path) -> AppConfig:
     )
 
 
-def _assistant_response(request_goal: str = "compare denim silhouettes"):
+def _image_result(label: str = "wide-leg denim") -> ImageSearchResult:
+    return ImageSearchResult(
+        title=f"Visual {label}",
+        page_url=f"https://example.test/{label}/page",
+        image_url=f"https://example.test/{label}/image.jpg",
+        thumbnail_url=f"https://example.test/{label}/thumb.jpg",
+        source="fixture",
+        engine="fixture",
+    )
+
+
+def _retrieval_bundle(label: str = "denim") -> RetrievalBundle:
+    canonical_url = f"https://example.test/{label}/canonical"
+    emerging_url = f"https://example.test/{label}/emerging"
+    return RetrievalBundle(
+        canonical_context=f"Canonical context for {label}",
+        emerging_context=f"Emerging context for {label}",
+        canonical_sources=[
+            WebSource(
+                source_id="C01",
+                query_kind="canonical",
+                title=f"Canonical {label}",
+                url=canonical_url,
+                snippet=f"Canonical snippet for {label}",
+                published_at="2026-01-01",
+            )
+        ],
+        emerging_sources=[
+            WebSource(
+                source_id="E01",
+                query_kind="emerging",
+                title=f"Emerging {label}",
+                url=emerging_url,
+                snippet=f"Emerging snippet for {label}",
+                published_at="2026-02-01",
+            )
+        ],
+        canonical_rows=[
+            {
+                "source_id": "C01",
+                "title": f"Canonical {label}",
+                "url": canonical_url,
+                "published_at": "2026-01-01",
+                "provider": "tavily",
+            }
+        ],
+        emerging_rows=[
+            {
+                "source_id": "E01",
+                "title": f"Emerging {label}",
+                "url": emerging_url,
+                "published_at": "2026-02-01",
+                "provider": "tavily",
+            }
+        ],
+    )
+
+
+def _assistant_response(
+    request_goal: str = "compare denim silhouettes",
+    *,
+    image_results: list[ImageSearchResult] | None = None,
+    retrieval: RetrievalBundle | None = None,
+    image_query: str = "wide leg denim outfits",
+):
     return AssistantResponseBundle(
         request_analysis=RequestAnalysis(
             request_goal=request_goal,
@@ -44,8 +110,12 @@ def _assistant_response(request_goal: str = "compare denim silhouettes"):
             is_in_scope=True,
         ),
         rule=f"Assistant rule for {request_goal}.",
-        image_query="wide leg denim outfits",
-        image_results=[],
+        retrieval=retrieval or RetrievalBundle(
+            canonical_context="",
+            emerging_context="",
+        ),
+        image_query=image_query,
+        image_results=image_results or [],
     )
 
 
@@ -83,6 +153,7 @@ def test_create_chat_endpoint_initializes_chat(monkeypatch, tmp_path):
     assert payload["title"] == ""
     assert payload["last_request_goal"] == ""
     assert payload["chat_turn"] == 0
+    assert payload["turn_artifacts"] == {}
 
     chat_db = open_chat_db(config)
     assert chat_db.get("workspace-a", config.user_db_name) == ["chat-created"]
@@ -188,7 +259,57 @@ def test_get_chat_endpoint_returns_messages_and_metadata(monkeypatch, tmp_path):
         "latest_chat_turn": 2,
         "latest_thread_id": "chat-read:2",
         "latest_workflow_error": "",
+        "turn_artifacts": {},
     }
+
+
+def test_get_chat_endpoint_returns_persisted_turn_artifacts(monkeypatch, tmp_path):
+    config = _install_test_api_config(monkeypatch, tmp_path)
+    chat_db = open_chat_db(config)
+    chat_db.put(
+        "chat-artifacts",
+        [
+            {"role": "user", "content": "Question"},
+            {"role": "assistant", "content": "Answer"},
+        ],
+        config.chat_db_name,
+    )
+    artifact = PersistedTurnArtifacts.from_assistant_response(
+        chat_turn=1,
+        assistant_response=_assistant_response(
+            request_goal="read restored artifacts",
+            image_results=[_image_result("restored")],
+            retrieval=_retrieval_bundle("restored"),
+            image_query="restored image query",
+        ),
+    )
+    chat_db.put(
+        "chat-artifacts",
+        {
+            "chat_turn": 1,
+            "turn_artifacts": {"1": artifact.model_dump(mode="json")},
+        },
+        config.chat_meta_db_name,
+    )
+    client = TestClient(api.app)
+
+    response = client.get(
+        "/chats/chat-artifacts",
+        params={"workspace_id": "workspace-a"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    restored = payload["turn_artifacts"]["1"]
+    assert restored["chat_turn"] == 1
+    assert restored["request_goal"] == "read restored artifacts"
+    assert restored["is_in_scope"] is True
+    assert restored["image_results"][0]["title"] == "Visual restored"
+    assert restored["retrieval"]["canonical_rows"][0]["url"] == (
+        "https://example.test/restored/canonical"
+    )
+    assert restored["retrieval"]["canonical_context"] == ""
+    assert restored["retrieval"]["canonical_sources"] == []
 
 
 def test_delete_chat_endpoint_removes_chat_and_workspace_entry(monkeypatch, tmp_path):
@@ -251,7 +372,10 @@ def test_chat_endpoint_owns_turn_numbering_and_persistence(monkeypatch, tmp_path
             chat_turn=kwargs["chat_turn"],
             normalized_prompt=kwargs["user_prompt"],
             assistant_response=_assistant_response(
-                request_goal=f"goal {kwargs['chat_turn']}"
+                request_goal=f"goal {kwargs['chat_turn']}",
+                image_results=[_image_result(f"turn-{kwargs['chat_turn']}")],
+                retrieval=_retrieval_bundle(f"turn-{kwargs['chat_turn']}"),
+                image_query=f"image query {kwargs['chat_turn']}",
             ),
         )
 
@@ -296,6 +420,92 @@ def test_chat_endpoint_owns_turn_numbering_and_persistence(monkeypatch, tmp_path
     assert meta["chat_turn"] == 2
     assert meta["last_request_goal"] == "goal 2"
     assert meta["title"] == "Denim title"
+    assert set(meta["turn_artifacts"]) == {"1", "2"}
+    assert meta["turn_artifacts"]["1"]["chat_turn"] == 1
+    assert meta["turn_artifacts"]["1"]["image_query"] == "image query 1"
+    assert meta["turn_artifacts"]["1"]["image_results"][0]["title"] == (
+        "Visual turn-1"
+    )
+    assert meta["turn_artifacts"]["1"]["retrieval"]["canonical_rows"][0]["url"] == (
+        "https://example.test/turn-1/canonical"
+    )
+    assert meta["turn_artifacts"]["1"]["retrieval"]["canonical_context"] == ""
+    assert meta["turn_artifacts"]["1"]["retrieval"]["canonical_sources"] == []
+    assert meta["turn_artifacts"]["2"]["chat_turn"] == 2
+    assert meta["turn_artifacts"]["2"]["image_results"][0]["title"] == (
+        "Visual turn-2"
+    )
+
+
+def test_chat_endpoint_replaces_artifacts_for_same_completed_turn(
+    monkeypatch,
+    tmp_path,
+):
+    config = _install_test_api_config(monkeypatch, tmp_path)
+    chat_db = open_chat_db(config)
+    existing_artifact = PersistedTurnArtifacts.from_assistant_response(
+        chat_turn=1,
+        assistant_response=_assistant_response(
+            request_goal="old goal",
+            image_results=[_image_result("old")],
+            retrieval=_retrieval_bundle("old"),
+            image_query="old image query",
+        ),
+    )
+    chat_db.put(
+        "chat-replace-artifacts",
+        [
+            {"role": "user", "content": "Original question"},
+            {"role": "assistant", "content": "Original answer"},
+        ],
+        config.chat_db_name,
+    )
+    chat_db.put(
+        "chat-replace-artifacts",
+        {
+            "chat_turn": 0,
+            "turn_artifacts": {"1": existing_artifact.model_dump(mode="json")},
+        },
+        config.chat_meta_db_name,
+    )
+
+    def fake_run_chat_turn(**kwargs):
+        return ChatTurnResult(
+            chat_id=kwargs["chat_id"],
+            user_id=kwargs["user_id"],
+            chat_turn=kwargs["chat_turn"],
+            normalized_prompt=kwargs["user_prompt"],
+            assistant_response=_assistant_response(
+                request_goal="replacement goal",
+                image_results=[_image_result("replacement")],
+                retrieval=_retrieval_bundle("replacement"),
+                image_query="replacement image query",
+            ),
+        )
+
+    monkeypatch.setattr(api, "run_chat_turn", fake_run_chat_turn)
+    client = TestClient(api.app)
+
+    response = client.post(
+        "/chat",
+        json={
+            "chat_id": "chat-replace-artifacts",
+            "workspace_id": "workspace-a",
+            "message": "Retry same turn",
+        },
+    )
+
+    assert response.status_code == 200
+    meta = chat_db.get("chat-replace-artifacts", config.chat_meta_db_name)
+    assert list(meta["turn_artifacts"]) == ["1"]
+    assert meta["turn_artifacts"]["1"]["image_query"] == "replacement image query"
+    assert meta["turn_artifacts"]["1"]["image_results"][0]["title"] == (
+        "Visual replacement"
+    )
+    assert chat_db.get("chat-replace-artifacts", config.chat_db_name) == [
+        {"role": "user", "content": "Original question"},
+        {"role": "assistant", "content": "Original answer"},
+    ]
 
 
 def test_chat_endpoint_stores_workflow_metadata_running_then_completed(
@@ -442,7 +652,12 @@ def test_resume_reuses_thread_id_and_persists_completed_turn_once(
             user_id=kwargs["user_id"],
             chat_turn=kwargs["chat_turn"],
             normalized_prompt=kwargs["user_prompt"],
-            assistant_response=_assistant_response(request_goal="resumed goal"),
+            assistant_response=_assistant_response(
+                request_goal="resumed goal",
+                image_results=[_image_result("resumed")],
+                retrieval=_retrieval_bundle("resumed"),
+                image_query="resumed image query",
+            ),
         )
 
     monkeypatch.setattr(api, "run_chat_turn", fake_run_chat_turn)
@@ -483,6 +698,14 @@ def test_resume_reuses_thread_id_and_persists_completed_turn_once(
     assert meta["latest_chat_turn"] == 2
     assert meta["latest_workflow_status"] == "completed"
     assert meta["latest_workflow_error"] == ""
+    assert meta["turn_artifacts"]["2"]["chat_turn"] == 2
+    assert meta["turn_artifacts"]["2"]["image_query"] == "resumed image query"
+    assert meta["turn_artifacts"]["2"]["image_results"][0]["title"] == (
+        "Visual resumed"
+    )
+    assert meta["turn_artifacts"]["2"]["retrieval"]["emerging_rows"][0]["url"] == (
+        "https://example.test/resumed/emerging"
+    )
 
 
 def test_resume_does_not_duplicate_completed_turns(monkeypatch, tmp_path):

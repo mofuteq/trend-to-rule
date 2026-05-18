@@ -1,6 +1,13 @@
+from typing import Any
+
 import streamlit as st
 
-from services.api_models import ChatMessage, ChatSessionResponse, ChatSummary
+from services.api_models import (
+    ChatMessage,
+    ChatSessionResponse,
+    ChatSummary,
+    PersistedTurnArtifacts,
+)
 
 RESUMABLE_WORKFLOW_STATUSES = {"running", "failed"}
 
@@ -24,6 +31,7 @@ def init_session_state() -> None:
     st.session_state.setdefault("latest_thread_id", "")
     st.session_state.setdefault("latest_workflow_error", "")
     st.session_state.setdefault("attempted_auto_resume_thread_ids", [])
+    st.session_state.setdefault("turn_artifacts", {})
     if not isinstance(st.session_state.chat_id, str):
         st.session_state.chat_id = str(st.session_state.chat_id)
     attempted_thread_ids = st.session_state.attempted_auto_resume_thread_ids
@@ -31,6 +39,9 @@ def init_session_state() -> None:
         st.session_state.attempted_auto_resume_thread_ids = list(attempted_thread_ids)
     elif not isinstance(attempted_thread_ids, list):
         st.session_state.attempted_auto_resume_thread_ids = []
+    st.session_state.turn_artifacts = _normalize_turn_artifacts_for_state(
+        st.session_state.turn_artifacts
+    )
 
 
 def reset_chat_selection() -> None:
@@ -40,6 +51,7 @@ def reset_chat_selection() -> None:
     st.session_state.last_request_goal = ""
     st.session_state.chat_turn = 0
     st.session_state.messages = []
+    st.session_state.turn_artifacts = {}
     st.session_state.pending_delete_chat_id = ""
     reset_workflow_state()
 
@@ -89,6 +101,7 @@ def start_new_chat_session(chat_id: str) -> None:
     st.session_state.last_request_goal = ""
     st.session_state.chat_turn = 0
     st.session_state.messages = []
+    st.session_state.turn_artifacts = {}
     reset_workflow_state()
 
 
@@ -101,6 +114,9 @@ def sync_active_chat_session(chat_session: ChatSessionResponse) -> None:
     st.session_state.messages = [
         _message_to_dict(message) for message in chat_session.messages
     ]
+    st.session_state.turn_artifacts = _normalize_turn_artifacts_for_state(
+        chat_session.turn_artifacts
+    )
     st.session_state.latest_workflow_status = chat_session.latest_workflow_status
     st.session_state.latest_chat_turn = chat_session.latest_chat_turn
     st.session_state.latest_thread_id = chat_session.latest_thread_id
@@ -154,3 +170,18 @@ def mark_auto_resume_attempted(thread_id: str) -> None:
 
 def _message_to_dict(message: ChatMessage) -> dict[str, str]:
     return {"role": message.role, "content": message.content}
+
+
+def _normalize_turn_artifacts_for_state(
+    raw_artifacts: Any,
+) -> dict[str, PersistedTurnArtifacts]:
+    if not isinstance(raw_artifacts, dict):
+        return {}
+    artifacts: dict[str, PersistedTurnArtifacts] = {}
+    for raw_value in raw_artifacts.values():
+        try:
+            artifact = PersistedTurnArtifacts.model_validate(raw_value)
+        except Exception:
+            continue
+        artifacts[str(artifact.chat_turn)] = artifact
+    return artifacts

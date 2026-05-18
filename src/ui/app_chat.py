@@ -3,7 +3,7 @@ import streamlit as st
 from core.app_config import AppConfig
 from core.text_utils import normalize_text_nfkc
 from services.api_client import post_chat_turn
-from services.api_models import ChatResponse
+from services.api_models import ChatResponse, PersistedTurnArtifacts
 from services.chat_workflow import RetrievalBundle
 from services.image_search import ImageSearchResult
 from services.web_search import build_web_sources_html_table
@@ -13,10 +13,15 @@ ASSISTANT_AVATAR = ":material/auto_awesome:"
 
 def render_history() -> None:
     """Render stored chat history."""
+    assistant_turn = 0
     for message in st.session_state.messages:
         if message["role"] == "assistant":
+            assistant_turn += 1
             with st.chat_message(message["role"], avatar=ASSISTANT_AVATAR):
                 st.markdown(message["content"])
+                artifact = get_persisted_turn_artifact(assistant_turn)
+                if artifact is not None:
+                    render_turn_artifacts(artifact)
         else:
             with st.chat_message(message["role"], avatar=None):
                 st.markdown(message["content"])
@@ -84,12 +89,35 @@ def render_retrieved_results(retrieval: RetrievalBundle) -> None:
         )
 
 
+def render_turn_artifacts(artifacts: PersistedTurnArtifacts) -> None:
+    """Render persisted non-text artifacts for one completed assistant turn."""
+    if artifacts.is_in_scope:
+        render_image_results(artifacts.image_results)
+    render_retrieved_results(artifacts.retrieval)
+
+
 def render_response_artifacts(response: ChatResponse) -> None:
     """Render non-text artifacts carried by a completed chat response."""
-    assistant_response = response.assistant_response
-    if assistant_response.request_analysis.is_in_scope:
-        render_image_results(assistant_response.image_results)
-    render_retrieved_results(assistant_response.retrieval)
+    render_turn_artifacts(
+        PersistedTurnArtifacts.from_assistant_response(
+            chat_turn=response.chat_turn,
+            assistant_response=response.assistant_response,
+        )
+    )
+
+
+def get_persisted_turn_artifact(chat_turn: int) -> PersistedTurnArtifacts | None:
+    """Return persisted artifacts for a turn from Streamlit session state."""
+    raw_artifacts = st.session_state.get("turn_artifacts", {})
+    if not isinstance(raw_artifacts, dict):
+        return None
+    raw_artifact = raw_artifacts.get(str(chat_turn)) or raw_artifacts.get(chat_turn)
+    if raw_artifact is None:
+        return None
+    try:
+        return PersistedTurnArtifacts.model_validate(raw_artifact)
+    except Exception:
+        return None
 
 
 def stream_markdown_text(text: str) -> None:
@@ -122,6 +150,16 @@ def sync_rendered_turn(response: ChatResponse) -> None:
     st.session_state.last_request_goal = (
         response.assistant_response.request_analysis.request_goal
     )
+    turn_artifacts = st.session_state.get("turn_artifacts", {})
+    if not isinstance(turn_artifacts, dict):
+        turn_artifacts = {}
+    turn_artifacts[str(response.chat_turn)] = (
+        PersistedTurnArtifacts.from_assistant_response(
+            chat_turn=response.chat_turn,
+            assistant_response=response.assistant_response,
+        )
+    )
+    st.session_state.turn_artifacts = turn_artifacts
 
 
 def process_user_prompt(

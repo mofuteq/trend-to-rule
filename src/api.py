@@ -23,6 +23,7 @@ from services.api_models import (  # noqa: E402
     CreateChatResponse,
     DeleteChatResponse,
     ListChatsResponse,
+    PersistedTurnArtifacts,
     ResumeChatRequest,
 )
 from services.chat import generate_chat_title  # noqa: E402
@@ -34,9 +35,11 @@ from services.chat_session import (  # noqa: E402
     ensure_user_chat_id,
     initialize_chat_session,
     list_chat_summaries,
+    load_turn_artifacts,
     load_chat_session,
     messages_to_model_history,
     open_chat_db,
+    persist_turn_artifacts,
     set_chat_title,
     set_last_request_goal,
     update_chat_meta,
@@ -546,6 +549,15 @@ def _persist_completed_chat_response(
         chat_db=chat_db,
         chat_meta_db_name=CONFIG.chat_meta_db_name,
     )
+    persist_turn_artifacts(
+        chat_id=chat_id,
+        artifacts=PersistedTurnArtifacts.from_assistant_response(
+            chat_turn=chat_turn,
+            assistant_response=result.assistant_response,
+        ),
+        chat_db=chat_db,
+        chat_meta_db_name=CONFIG.chat_meta_db_name,
+    )
     title = _ensure_chat_title(
         chat_id=chat_id,
         messages=messages,
@@ -614,4 +626,5 @@ def _chat_session_response(
         ),
         latest_thread_id=str(session.meta.get("latest_thread_id") or ""),
         latest_workflow_error=str(session.meta.get("latest_workflow_error") or ""),
+        turn_artifacts=load_turn_artifacts(session.meta),
     )

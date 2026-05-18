@@ -317,6 +317,10 @@ chat-id updates. Streamlit is a UI client for chat rendering and user
 interaction. The backend process uses the same local `.data/` storage paths
 configured in `src/.env`.
 
+Completed chat turns persist their display artifacts, including visual
+references and retrieved evidence links, so reloaded chats can render the same
+decision-support surface without rerunning retrieval.
+
 Terminal 1: launch the FastAPI backend with uvicorn:
 
 ```bash
