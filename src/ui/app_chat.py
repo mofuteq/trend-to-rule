@@ -2,8 +2,12 @@ import streamlit as st
 
 from core.app_config import AppConfig
 from core.text_utils import normalize_text_nfkc
-from services.api_client import post_chat_turn
-from services.api_models import ChatResponse, PersistedTurnArtifacts
+from services.api_client import stream_chat_turn
+from services.api_models import (
+    ChatResponse,
+    PersistedTurnArtifacts,
+    WorkflowStreamEvent,
+)
 from services.chat_workflow import RetrievalBundle
 from services.image_search import ImageSearchResult
 from services.web_search import build_web_sources_html_table
@@ -162,6 +166,41 @@ def sync_rendered_turn(response: ChatResponse) -> None:
     st.session_state.turn_artifacts = turn_artifacts
 
 
+def update_workflow_status_from_event(status, event: WorkflowStreamEvent) -> None:
+    """Update the existing Streamlit status component from one workflow event."""
+    label = event.label or "Running workflow..."
+    if event.event_type == "error" or event.event_type == "task_failed":
+        status.update(label=label, state="error", expanded=False)
+    elif event.event_type == "final_response":
+        status.update(label=label, state="complete", expanded=False)
+    else:
+        status.update(label=label, expanded=False)
+
+
+def stream_chat_response(
+    *,
+    chat_id: str,
+    workspace_id: str,
+    message: str,
+    config: AppConfig,
+    status,
+) -> ChatResponse:
+    """Consume workflow SSE events and return the final chat response."""
+    last_error = ""
+    for event in stream_chat_turn(
+        chat_id=chat_id,
+        workspace_id=workspace_id,
+        message=message,
+        config=config,
+    ):
+        update_workflow_status_from_event(status, event)
+        if event.event_type == "final_response" and event.response is not None:
+            return event.response
+        if event.event_type == "error":
+            last_error = event.error
+    raise RuntimeError(last_error or "Workflow stream ended without a response.")
+
+
 def process_user_prompt(
     user_prompt: str,
     *,
@@ -179,28 +218,15 @@ def process_user_prompt(
     with st.chat_message("user", avatar=None):
         st.markdown(normalized_prompt)
     with st.chat_message("assistant", avatar=ASSISTANT_AVATAR):
-        with st.status("Analyzing...", expanded=False) as status:
-            response = post_chat_turn(
+        with st.status("Running workflow...", expanded=False) as status:
+            response = stream_chat_response(
                 chat_id=st.session_state.chat_id,
                 workspace_id=user_id,
                 message=normalized_prompt,
                 config=config,
+                status=status,
             )
-            assistant_response = response.assistant_response
-            request_analysis = assistant_response.request_analysis
-            assistant_rule = assistant_response.rule
-            st.write(request_analysis)
-            if not request_analysis.is_in_scope:
-                status.update(
-                    label="Outside app scope", state="complete", expanded=False
-                )
-            else:
-                st.write(assistant_response.structured_claims)
-                st.write(assistant_response.structured_draft)
-                st.write(assistant_response.image_query)
-                status.update(
-                    label="Thinking complete", state="complete", expanded=False
-                )
+            assistant_rule = response.assistant_response.rule
 
         stream_markdown_text(assistant_rule)
         render_response_artifacts(response)

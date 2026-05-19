@@ -1,4 +1,4 @@
-from services.api_models import PersistedTurnArtifacts
+from services.api_models import PersistedTurnArtifacts, WorkflowStreamEvent
 from services.chat_workflow import RetrievalBundle
 from services.image_search import ImageSearchResult
 from ui import app_chat
@@ -34,6 +34,14 @@ class FakeStreamlit:
 
     def markdown(self, content, **kwargs):
         self.calls.append(("markdown", content, kwargs))
+
+
+class FakeStatus:
+    def __init__(self):
+        self.updates = []
+
+    def update(self, **kwargs):
+        self.updates.append(kwargs)
 
 
 def _artifact(chat_turn: int = 1) -> PersistedTurnArtifacts:
@@ -111,4 +119,34 @@ def test_render_history_does_not_render_artifacts_for_user_messages(monkeypatch)
     assert fake_st.calls == [
         ("chat_message", "user", None),
         ("markdown", "Question only", {}),
+    ]
+
+
+def test_update_workflow_status_from_stream_events():
+    status = FakeStatus()
+
+    app_chat.update_workflow_status_from_event(
+        status,
+        WorkflowStreamEvent(
+            event_type="task_started",
+            node="analyze_request",
+            label="Reading request...",
+        ),
+    )
+    app_chat.update_workflow_status_from_event(
+        status,
+        WorkflowStreamEvent(
+            event_type="final_response",
+            node="final_response",
+            label="Reference frame ready.",
+        ),
+    )
+
+    assert status.updates == [
+        {"label": "Reading request...", "expanded": False},
+        {
+            "label": "Reference frame ready.",
+            "state": "complete",
+            "expanded": False,
+        },
     ]

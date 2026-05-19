@@ -141,3 +141,24 @@ class ChatResponse(BaseModel):
     message: str
     assistant_response: AssistantResponseBundle
     title: str = ""
+
+
+class WorkflowStreamEvent(BaseModel):
+    """Display-safe workflow event streamed by the chat SSE endpoint."""
+
+    event_type: Literal[
+        "task_started",
+        "task_completed",
+        "task_failed",
+        "checkpoint",
+        "final_response",
+        "error",
+    ]
+    node: str | None = None
+    label: str
+    chat_id: str | None = None
+    chat_turn: int | None = None
+    thread_id: str | None = None
+    next_nodes: list[str] = Field(default_factory=list)
+    error: str = ""
+    response: ChatResponse | None = None

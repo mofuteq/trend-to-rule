@@ -4,6 +4,8 @@ import logging
 import sqlite3
 import threading
 import uuid
+from collections.abc import Iterator
+from typing import Any, Literal
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
@@ -195,6 +197,36 @@ class AssistantResponseBundle(BaseModel):
     final_answer_reflection_failure_reason: str | None = None
     image_query: str = ""
     image_results: list[ImageSearchResult] = Field(default_factory=list)
+
+
+class WorkflowProgressEvent(BaseModel):
+    """Display-safe LangGraph workflow progress event."""
+
+    event_type: Literal[
+        "task_started",
+        "task_completed",
+        "task_failed",
+        "checkpoint",
+    ]
+    node: str | None = None
+    label: str
+    next_nodes: list[str] = Field(default_factory=list)
+    error: str = ""
+
+
+WORKFLOW_NODE_LABELS = {
+    "analyze_request": "Reading request...",
+    "retrieve_supporting_context": "Retrieving evidence...",
+    "extract_claims": "Extracting claims...",
+    "extract_structured_draft": "Structuring evidence...",
+    "generate_decision_support": "Rendering reference frame...",
+    "reflect_on_final_answer": "Checking output boundary...",
+    "generate_query": "Preparing visual reference query...",
+    "render_image_query": "Preparing visual reference query...",
+    "search_images": "Finding visual references...",
+}
+UNKNOWN_WORKFLOW_LABEL = "Running workflow..."
+WORKFLOW_FAILED_LABEL = "Workflow failed."
 
 
 @tracing.observe(name="retrieve_supporting_context")
@@ -669,6 +701,210 @@ def _get_compiled_graph(config: AppConfig):
     return _COMPILED_GRAPH
 
 
+def _assistant_response_from_final_state(
+    final_state: dict[str, Any] | AssistantResponseState,
+) -> AssistantResponseBundle:
+    if isinstance(final_state, AssistantResponseState):
+        state_data = dict(final_state.__dict__)
+    else:
+        state_data = final_state
+    final_answer_reflection = state_data.get("final_answer_reflection")
+    if isinstance(final_answer_reflection, dict):
+        final_answer_reflection = FinalAnswerRubric.model_validate(
+            final_answer_reflection
+        )
+    return AssistantResponseBundle(
+        request_analysis=state_data["request_analysis"],
+        retrieval=state_data.get("retrieval") or _empty_retrieval_bundle(),
+        structured_claims=state_data.get("structured_claims"),
+        structured_draft=state_data.get("structured_draft"),
+        rule=state_data.get("rule") or "",
+        final_answer_reflection=final_answer_reflection,
+        final_answer_reflection_passed=state_data.get(
+            "final_answer_reflection_passed"
+        ),
+        final_answer_reflection_failed_criteria=_failed_final_answer_rubric_criteria(
+            final_answer_reflection
+        )
+        if final_answer_reflection is not None
+        else [],
+        final_answer_reflection_attempt_count=state_data.get(
+            "final_answer_reflection_attempt_count"
+        )
+        or 0,
+        final_answer_reflection_failure_reason=state_data.get(
+            "final_answer_reflection_failure_reason"
+        ),
+        image_query=state_data.get("image_query") or "",
+        image_results=state_data.get("image_results") or [],
+    )
+
+
+def _workflow_label_for_node(node: str | None) -> str:
+    if not node:
+        return UNKNOWN_WORKFLOW_LABEL
+    return WORKFLOW_NODE_LABELS.get(node, UNKNOWN_WORKFLOW_LABEL)
+
+
+def _short_stream_error(value: Any, *, limit: int = 240) -> str:
+    text = " ".join(str(value or "").split())
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 3]}..."
+
+
+def _split_langgraph_stream_part(part: Any) -> tuple[str, Any] | None:
+    if isinstance(part, dict) and isinstance(part.get("type"), str):
+        return str(part["type"]), part.get("data")
+    if (
+        isinstance(part, tuple)
+        and len(part) == 2
+        and isinstance(part[0], str)
+    ):
+        return part[0], part[1]
+    if isinstance(part, dict) and "name" in part:
+        return "tasks", part
+    return None
+
+
+def _progress_event_from_task(data: Any) -> WorkflowProgressEvent | None:
+    if not isinstance(data, dict):
+        return None
+    node = str(data.get("name") or "") or None
+    if data.get("error"):
+        return WorkflowProgressEvent(
+            event_type="task_failed",
+            node=node,
+            label=WORKFLOW_FAILED_LABEL,
+            error=_short_stream_error(data.get("error")),
+        )
+    if "input" in data:
+        return WorkflowProgressEvent(
+            event_type="task_started",
+            node=node,
+            label=_workflow_label_for_node(node),
+        )
+    if "result" in data or "error" in data:
+        return WorkflowProgressEvent(
+            event_type="task_completed",
+            node=node,
+            label=_workflow_label_for_node(node),
+        )
+    return None
+
+
+def _progress_event_from_checkpoint(data: Any) -> WorkflowProgressEvent | None:
+    if not isinstance(data, dict):
+        return None
+    next_nodes = [
+        str(node)
+        for node in data.get("next", [])
+        if str(node) not in {"__start__", "__end__"}
+    ]
+    label = _workflow_label_for_node(next_nodes[0] if next_nodes else None)
+    return WorkflowProgressEvent(
+        event_type="checkpoint",
+        node=None,
+        label=label,
+        next_nodes=next_nodes,
+    )
+
+
+def _iter_graph_stream(
+    graph: Any,
+    graph_input: AssistantResponseState | None,
+    invoke_config: dict[str, Any],
+) -> Iterator[Any]:
+    stream_modes = ["tasks", "values"]
+    try:
+        yield from graph.stream(
+            graph_input,
+            invoke_config,
+            stream_mode=stream_modes,
+            version="v2",
+        )
+    except TypeError as err:
+        if "version" not in str(err):
+            raise
+        yield from graph.stream(
+            graph_input,
+            invoke_config,
+            stream_mode=stream_modes,
+        )
+
+
+def stream_assistant_response(
+    user_prompt: str,
+    *,
+    config: AppConfig,
+    last_request_goal: str | None,
+    history: list[ModelMessage] | None,
+    thread_id: str | None = None,
+    resume_from_checkpoint: bool = False,
+    langfuse_session_id: str | None = None,
+    langfuse_user_id: str | None = None,
+) -> Iterator[WorkflowProgressEvent | AssistantResponseBundle]:
+    """Stream display-safe workflow events and yield the final response bundle."""
+    initial_state = None
+    if not resume_from_checkpoint:
+        initial_state = AssistantResponseState(
+            user_prompt=user_prompt,
+            config=config,
+            last_request_goal=last_request_goal,
+            history=history,
+        )
+    resolved_thread_id = thread_id or str(uuid.uuid4())
+    tags = [*tracing.get_repoa_trace_tags(), "chat_workflow", "langgraph"]
+    metadata = {
+        **tracing.get_repoa_trace_metadata(),
+        "chat_id": langfuse_session_id,
+        "langfuse_session_id": langfuse_session_id,
+        "langfuse_user_id": langfuse_user_id,
+        "thread_id": resolved_thread_id,
+        "text_retrieval_backend": "tavily",
+    }
+    metadata = {key: value for key, value in metadata.items() if value is not None}
+    invoke_config = {
+        "configurable": {"thread_id": resolved_thread_id},
+        **tracing.get_langchain_invoke_config(
+            run_name="chat_workflow",
+            tags=tags,
+            metadata=metadata,
+        ),
+    }
+    final_state: dict[str, Any] | AssistantResponseState | None = None
+    with tracing.propagate_attributes(
+        session_id=langfuse_session_id,
+        user_id=langfuse_user_id,
+        tags=tags,
+    ):
+        for part in _iter_graph_stream(
+            _get_compiled_graph(config),
+            initial_state,
+            invoke_config,
+        ):
+            stream_part = _split_langgraph_stream_part(part)
+            if stream_part is None:
+                continue
+            mode, data = stream_part
+            if mode == "tasks":
+                event = _progress_event_from_task(data)
+                if event is not None:
+                    yield event
+            elif mode == "checkpoints":
+                event = _progress_event_from_checkpoint(data)
+                if event is not None:
+                    yield event
+            elif mode == "values":
+                if isinstance(data, (dict, AssistantResponseState)):
+                    final_state = data
+    if final_state is None:
+        raise RuntimeError("LangGraph stream completed without final state.")
+    yield _assistant_response_from_final_state(final_state)
+
+
 @tracing.observe(name="generate_assistant_response")
 def generate_assistant_response(
     user_prompt: str,
@@ -734,28 +970,4 @@ def generate_assistant_response(
             initial_state,
             invoke_config,
         )
-    return AssistantResponseBundle(
-        request_analysis=final_state["request_analysis"],
-        retrieval=final_state.get("retrieval") or _empty_retrieval_bundle(),
-        structured_claims=final_state.get("structured_claims"),
-        structured_draft=final_state.get("structured_draft"),
-        rule=final_state.get("rule") or "",
-        final_answer_reflection=final_state.get("final_answer_reflection"),
-        final_answer_reflection_passed=final_state.get(
-            "final_answer_reflection_passed"
-        ),
-        final_answer_reflection_failed_criteria=_failed_final_answer_rubric_criteria(
-            final_state.get("final_answer_reflection")
-        )
-        if final_state.get("final_answer_reflection") is not None
-        else [],
-        final_answer_reflection_attempt_count=final_state.get(
-            "final_answer_reflection_attempt_count"
-        )
-        or 0,
-        final_answer_reflection_failure_reason=final_state.get(
-            "final_answer_reflection_failure_reason"
-        ),
-        image_query=final_state.get("image_query") or "",
-        image_results=final_state.get("image_results") or [],
-    )
+    return _assistant_response_from_final_state(final_state)

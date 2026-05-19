@@ -1,5 +1,6 @@
 """HTTP client for the FastAPI chat execution boundary."""
 
+from collections.abc import Iterable, Iterator
 import httpx
 
 from core.app_config import AppConfig
@@ -12,6 +13,7 @@ from services.api_models import (
     DeleteChatResponse,
     ListChatsResponse,
     ResumeChatRequest,
+    WorkflowStreamEvent,
 )
 
 
@@ -90,6 +92,60 @@ def post_chat_turn(
         response = client.post("/chat", json=request.model_dump())
         response.raise_for_status()
         return ChatResponse.model_validate(response.json())
+
+
+def stream_chat_turn(
+    *,
+    chat_id: str,
+    message: str,
+    workspace_id: str,
+    config: AppConfig,
+) -> Iterator[WorkflowStreamEvent]:
+    """Post a chat turn and yield workflow progress from the SSE endpoint."""
+    request = ChatRequest(
+        chat_id=chat_id,
+        workspace_id=workspace_id,
+        message=message,
+    )
+    with _client(config) as client:
+        with client.stream(
+            "POST",
+            "/chat/stream",
+            json=request.model_dump(),
+        ) as response:
+            response.raise_for_status()
+            yield from parse_workflow_sse_lines(response.iter_lines())
+
+
+def parse_workflow_sse_lines(
+    lines: Iterable[str | bytes],
+) -> Iterator[WorkflowStreamEvent]:
+    """Parse compact workflow SSE lines into typed events."""
+    data_lines: list[str] = []
+    for raw_line in lines:
+        line = (
+            raw_line.decode("utf-8")
+            if isinstance(raw_line, bytes)
+            else str(raw_line)
+        ).rstrip("\r")
+        if not line:
+            if data_lines:
+                yield WorkflowStreamEvent.model_validate_json(
+                    "\n".join(data_lines)
+                )
+            data_lines = []
+            continue
+        if line.startswith(":"):
+            continue
+        field, separator, value = line.partition(":")
+        if not separator:
+            continue
+        if value.startswith(" "):
+            value = value[1:]
+        if field == "data":
+            data_lines.append(value)
+    if data_lines:
+        yield WorkflowStreamEvent.model_validate_json("\n".join(data_lines))
 
 
 def resume_chat(

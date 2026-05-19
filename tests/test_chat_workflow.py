@@ -151,6 +151,92 @@ def test_generate_assistant_response_resume_invokes_checkpoint_without_new_input
     assert captured["invoke_config"]["configurable"]["thread_id"] == "chat-123:2"
 
 
+def test_stream_assistant_response_normalizes_tasks_without_raw_payloads(
+    monkeypatch,
+    tmp_path,
+):
+    config = _make_config(tmp_path)
+    captured = {}
+    raw_prompt = "SECRET_RAW_PROMPT"
+    raw_article = "SECRET_RETRIEVED_ARTICLE_CONTENT"
+    raw_output = "SECRET_FULL_TASK_OUTPUT"
+
+    class FakeGraph:
+        def stream(self, graph_input, invoke_config, *, stream_mode, version):
+            captured["graph_input"] = graph_input
+            captured["invoke_config"] = invoke_config
+            captured["stream_mode"] = stream_mode
+            captured["version"] = version
+            yield {
+                "type": "tasks",
+                "data": {
+                    "name": "analyze_request",
+                    "input": {
+                        "user_prompt": raw_prompt,
+                        "graph_state": {"article": raw_article},
+                    },
+                    "triggers": ("branch:to:analyze_request",),
+                },
+            }
+            yield {
+                "type": "tasks",
+                "data": {
+                    "name": "retrieve_supporting_context",
+                    "error": None,
+                    "result": {
+                        "retrieval": raw_article,
+                        "full_output": raw_output,
+                    },
+                    "interrupts": [],
+                },
+            }
+            yield {
+                "type": "values",
+                "data": {
+                    "request_analysis": _request_analysis(in_scope=True),
+                    "retrieval": workflow.RetrievalBundle(
+                        canonical_context=raw_article,
+                        emerging_context="",
+                    ),
+                    "rule": "Safe streamed rule.",
+                },
+            }
+
+    monkeypatch.setattr(workflow, "_get_compiled_graph", lambda config: FakeGraph())
+
+    items = list(
+        workflow.stream_assistant_response(
+            user_prompt=raw_prompt,
+            config=config,
+            last_request_goal=None,
+            history=[],
+            thread_id="chat-stream:1",
+        )
+    )
+
+    progress_events = [
+        item for item in items if isinstance(item, workflow.WorkflowProgressEvent)
+    ]
+    assert [event.event_type for event in progress_events] == [
+        "task_started",
+        "task_completed",
+    ]
+    assert [event.label for event in progress_events] == [
+        "Reading request...",
+        "Retrieving evidence...",
+    ]
+    progress_json = "\n".join(event.model_dump_json() for event in progress_events)
+    assert raw_prompt not in progress_json
+    assert raw_article not in progress_json
+    assert raw_output not in progress_json
+    assert "graph_state" not in progress_json
+    assert captured["stream_mode"] == ["tasks", "values"]
+    assert captured["version"] == "v2"
+    assert captured["graph_input"].user_prompt == raw_prompt
+    assert captured["invoke_config"]["configurable"]["thread_id"] == "chat-stream:1"
+    assert items[-1].rule == "Safe streamed rule."
+
+
 def test_generate_assistant_response_resumes_real_sqlite_checkpoint(
     monkeypatch,
     tmp_path,

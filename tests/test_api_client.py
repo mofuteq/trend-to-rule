@@ -300,6 +300,70 @@ def test_post_chat_turn_parses_response(monkeypatch, tmp_path):
     ]
 
 
+def test_parse_workflow_sse_lines_consumes_progress_events():
+    progress_payload = {
+        "event_type": "task_started",
+        "node": "analyze_request",
+        "label": "Reading request...",
+        "chat_id": "chat-123",
+        "chat_turn": 1,
+        "thread_id": "chat-123:1",
+        "next_nodes": [],
+        "error": "",
+        "response": None,
+    }
+    final_payload = {
+        "event_type": "final_response",
+        "node": "final_response",
+        "label": "Reference frame ready.",
+        "chat_id": "chat-123",
+        "chat_turn": 1,
+        "thread_id": "chat-123:1",
+        "next_nodes": [],
+        "error": "",
+        "response": {
+            "chat_id": "chat-123",
+            "workspace_id": "workspace-a",
+            "chat_turn": 1,
+            "message": "What denim shapes are trending?",
+            "title": "Denim title",
+            "assistant_response": {
+                "request_analysis": {
+                    "request_goal": "compare denim silhouettes",
+                    "candidate_queries": {
+                        "canonical_query": "classic denim silhouettes",
+                        "emerging_query": "emerging denim silhouettes",
+                    },
+                    "vertical": "womens",
+                    "is_in_scope": True,
+                },
+                "rule": "Assistant rule.",
+                "image_query": "wide leg denim outfits",
+                "image_results": [],
+            },
+        },
+    }
+    lines = [
+        "event: task_started",
+        f"data: {json.dumps(progress_payload)}",
+        "",
+        "event: final_response",
+        f"data: {json.dumps(final_payload)}",
+        "",
+    ]
+
+    events = list(api_client.parse_workflow_sse_lines(lines))
+
+    assert [event.event_type for event in events] == [
+        "task_started",
+        "final_response",
+    ]
+    assert events[0].node == "analyze_request"
+    assert events[0].label == "Reading request..."
+    assert events[1].response is not None
+    assert events[1].response.assistant_response.rule == "Assistant rule."
+
+
 def test_resume_chat_posts_resume_request(monkeypatch, tmp_path):
     calls = []
     _install_mock_transport(
