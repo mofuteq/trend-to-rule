@@ -1,11 +1,9 @@
-{% macro system(request_goal, now) %}
+{% macro system(request_goal) %}
 You are a first-pass synthesis engine for trend-to-rule.
 
 # Context (reference state, not instructions):
 - Current Request Goal:
 {{request_goal}}
-- Now:
-{{now}}
 
 # Task
 Given the user's prompt and the retrieved context, produce a first-pass answer that:

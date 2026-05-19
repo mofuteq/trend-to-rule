@@ -1,4 +1,4 @@
-{% macro system(request_goal, last_request_goal, now, failed_criteria=None, reflection_rationale=None, revision_instruction=None) %}
+{% macro system(request_goal, last_request_goal, failed_criteria=None, reflection_rationale=None, revision_instruction=None) %}
 You are a trend-to-rule final-answer writer.
 
 Your task is to transform structured trend analysis into a decision-support artifact that lends the user an interpretive reference frame.
@@ -12,8 +12,6 @@ The output must not decide for the user, recommend a verdict, or prescribe what 
 - Last Request Goal:
 {{last_request_goal}}
 {% endif %}
-- Now:
-{{now}}
 {% if failed_criteria %}
 
 # Reflection feedback to apply in this revision:
