@@ -1,6 +1,6 @@
 """Domain-level chat service functions built on top of the LLM client."""
 
-from datetime import datetime
+from datetime import date
 from typing import Literal
 
 from pydantic_ai.messages import ModelMessage
@@ -58,7 +58,7 @@ def generate_search_query(
         .module.system(
             request_goal=request_goal,
             last_request_goal=last_request_goal,
-            now=datetime.now()
+            current_date=date.today().isoformat(),
         ),
         response_model=SearchQuery,
     )
@@ -169,7 +169,6 @@ def extract_claims(
         system_prompt=TEMPLATE_STRUCTURED_CLAIMS
         .module.system(
             request_goal=request_goal,
-            now=datetime.now()
         ),
         response_model=StructuredClaims,
     )
@@ -220,7 +219,6 @@ def extract_structured_draft(
         system_prompt=TEMPLATE_STRUCTURED_DRAFT
         .module.system(
             request_goal=request_goal,
-            now=datetime.now()
         ),
         response_model=StructuredDraft,
         reasoning_effort="medium",
@@ -264,7 +262,6 @@ def generate_decision_support(
         .module.system(
             request_goal=request_goal,
             last_request_goal=last_request_goal,
-            now=datetime.now(),
             failed_criteria=failed_criteria,
             reflection_rationale=reflection_rationale,
             revision_instruction=revision_instruction,
@@ -302,7 +299,6 @@ def reflect_on_final_answer(
         system_prompt=TEMPLATE_FINAL_ANSWER_REFLECTION
         .module.system(
             request_goal=request_goal,
-            now=datetime.now(),
         ),
         response_model=FinalAnswerRubric,
         reasoning_effort="medium",

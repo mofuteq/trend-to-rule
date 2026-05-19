@@ -522,7 +522,6 @@ def test_final_answer_prompt_contains_thesis_constraints():
     prompt = TEMPLATE_DECISION_SUPPORT.module.system(
         request_goal="compare denim silhouettes",
         last_request_goal=None,
-        now="2026-05-14",
         failed_criteria=None,
         reflection_rationale=None,
         revision_instruction=None,
@@ -536,12 +535,12 @@ def test_final_answer_prompt_contains_thesis_constraints():
     assert "continuous prose" in normalized
     assert "internal reasoning substrate" in normalized
     assert "do not expose the schema shape" in normalized
+    assert "now:" not in normalized
 
 
 def test_final_answer_reflection_prompt_contains_localized_rules_constraints():
     prompt = TEMPLATE_FINAL_ANSWER_REFLECTION.module.system(
         request_goal="compare denim silhouettes",
-        now="2026-05-14",
     )
     normalized = prompt.lower()
 
@@ -550,6 +549,7 @@ def test_final_answer_reflection_prompt_contains_localized_rules_constraints():
     assert "explicit, not merely implied" in normalized
     assert "when [observable condition], it may signal [interpretation]" in normalized
     assert "[観測可能な条件] が見られるとき、[解釈] を示す可能性がある" in prompt
+    assert "now:" not in normalized
 
 
 def test_missing_evidence_routes_to_evidence_unavailable_response(
