@@ -191,6 +191,22 @@ def test_stream_assistant_response_normalizes_tasks_without_raw_payloads(
                 },
             }
             yield {
+                "type": "checkpoints",
+                "data": {
+                    "values": {
+                        "user_prompt": raw_prompt,
+                        "retrieval": raw_article,
+                    },
+                    "next": ["extract_claims"],
+                    "tasks": [
+                        {
+                            "name": "extract_claims",
+                            "state": {"prompt": raw_prompt},
+                        }
+                    ],
+                },
+            }
+            yield {
                 "type": "values",
                 "data": {
                     "request_analysis": _request_analysis(in_scope=True),
@@ -220,17 +236,22 @@ def test_stream_assistant_response_normalizes_tasks_without_raw_payloads(
     assert [event.event_type for event in progress_events] == [
         "task_started",
         "task_completed",
+        "checkpoint",
     ]
     assert [event.label for event in progress_events] == [
         "Reading request...",
         "Retrieving evidence...",
+        "Extracting claims...",
     ]
+    assert progress_events[2].next_nodes == ["extract_claims"]
     progress_json = "\n".join(event.model_dump_json() for event in progress_events)
     assert raw_prompt not in progress_json
     assert raw_article not in progress_json
     assert raw_output not in progress_json
     assert "graph_state" not in progress_json
-    assert captured["stream_mode"] == ["tasks", "values"]
+    assert "values" not in progress_json
+    assert "tasks" not in progress_json
+    assert captured["stream_mode"] == ["tasks", "checkpoints", "values"]
     assert captured["version"] == "v2"
     assert captured["graph_input"].user_prompt == raw_prompt
     assert captured["invoke_config"]["configurable"]["thread_id"] == "chat-stream:1"

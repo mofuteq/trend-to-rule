@@ -817,7 +817,7 @@ def _iter_graph_stream(
     graph_input: AssistantResponseState | None,
     invoke_config: dict[str, Any],
 ) -> Iterator[Any]:
-    stream_modes = ["tasks", "values"]
+    stream_modes = ["tasks", "checkpoints", "values"]
     try:
         yield from graph.stream(
             graph_input,
