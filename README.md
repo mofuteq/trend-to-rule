@@ -42,6 +42,13 @@ an advice-shaped wardrobe question, and a historical evolution query.
 **RAR** means **Retrieval Augmented Reasoning**: retrieval is treated as part of
 the reasoning workflow rather than passive context lookup.
 
+In this project, RAR is not about giving the model more context. It is about
+moving reasoning structure out of the model and into the runtime. Retrieval,
+typed intermediate artifacts, reflection, checkpoints, and workflow status
+events form a reasoning backbone around the model. The LLM remains a
+replaceable transformation component; the runtime owns the structure that makes
+reasoning visible, controllable, recoverable, and easier to inspect.
+
 **Search-native** means the system uses live web search as its primary evidence
 source, not a prebuilt corpus, local vector database, or fine-tuned model
 knowledge.
