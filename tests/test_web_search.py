@@ -1,5 +1,6 @@
 from core.models import WebSource
 from services.web_search import (
+    build_web_sources_html_table,
     dedupe_sources_by_url,
     normalize_tavily_text_results,
     sources_to_prompt_context,
@@ -136,3 +137,22 @@ def test_sources_to_prompt_context_renders_normalized_fields_only():
     assert "provider-only raw content" not in context
     assert "provider_payload" not in context
     assert "do not render" not in context
+
+
+def test_web_sources_table_hides_provider_column():
+    html = build_web_sources_html_table(
+        [
+            {
+                "source_id": "C01",
+                "title": "Runway report",
+                "url": "https://example.com/report",
+                "published_at": "2026-05-01",
+                "provider": "tavily",
+            }
+        ]
+    )
+
+    assert "<th>provider</th>" not in html
+    assert "tavily" not in html
+    assert "Runway report" in html
+    assert "2026-05-01" in html
