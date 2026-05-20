@@ -343,8 +343,9 @@ Terminal 2: launch the Streamlit UI against that backend:
 T2R_API_BASE_URL=http://localhost:8000 uv run streamlit run src/app.py
 ```
 
-Streaming, authentication, job queues, and Docker Compose remain outside the
-current runtime boundary.
+The runtime includes lightweight SSE status streaming for workflow progress.
+Authentication, job queues, WebSocket transport, and Docker Compose remain
+outside the current runtime boundary.
 
 ## Run With Docker
 
