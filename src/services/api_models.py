@@ -151,6 +151,7 @@ class WorkflowStreamEvent(BaseModel):
         "task_completed",
         "task_failed",
         "checkpoint",
+        "progress_summary",
         "final_response",
         "error",
     ]

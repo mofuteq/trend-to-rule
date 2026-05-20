@@ -207,6 +207,7 @@ class WorkflowProgressEvent(BaseModel):
         "task_completed",
         "task_failed",
         "checkpoint",
+        "progress_summary",
     ]
     node: str | None = None
     label: str
@@ -769,30 +770,152 @@ def _split_langgraph_stream_part(part: Any) -> tuple[str, Any] | None:
     return None
 
 
-def _progress_event_from_task(data: Any) -> WorkflowProgressEvent | None:
-    if not isinstance(data, dict):
+def _field_value(value: Any, field_name: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(field_name)
+    return getattr(value, field_name, None)
+
+
+def _sequence_count(value: Any) -> int:
+    if isinstance(value, (list, tuple)):
+        return len(value)
+    return 0
+
+
+def _node_result_value(result: Any, field_name: str) -> Any:
+    if not isinstance(result, dict):
         return None
-    node = str(data.get("name") or "") or None
-    if data.get("error"):
+    return result.get(field_name)
+
+
+def _source_counts(retrieval: Any) -> tuple[int, int]:
+    canonical_count = _sequence_count(_field_value(retrieval, "canonical_sources"))
+    emerging_count = _sequence_count(_field_value(retrieval, "emerging_sources"))
+    if canonical_count == 0:
+        canonical_count = _sequence_count(_field_value(retrieval, "canonical_rows"))
+    if emerging_count == 0:
+        emerging_count = _sequence_count(_field_value(retrieval, "emerging_rows"))
+    return canonical_count, emerging_count
+
+
+def _reflection_from_value(value: Any) -> FinalAnswerRubric | None:
+    if isinstance(value, FinalAnswerRubric):
+        return value
+    if isinstance(value, dict):
+        try:
+            return FinalAnswerRubric.model_validate(value)
+        except Exception:
+            return None
+    return None
+
+
+def _progress_summary_from_task(
+    *,
+    node: str | None,
+    result: Any,
+) -> WorkflowProgressEvent | None:
+    if node == "retrieve_supporting_context":
+        retrieval = _node_result_value(result, "retrieval")
+        if retrieval is None:
+            return None
+        canonical_count, emerging_count = _source_counts(retrieval)
+        total_count = canonical_count + emerging_count
         return WorkflowProgressEvent(
-            event_type="task_failed",
+            event_type="progress_summary",
             node=node,
-            label=WORKFLOW_FAILED_LABEL,
-            error=_short_stream_error(data.get("error")),
+            label=f"Retrieving evidence... {total_count} sources found",
         )
-    if "input" in data:
-        return WorkflowProgressEvent(
-            event_type="task_started",
-            node=node,
-            label=_workflow_label_for_node(node),
+    if node == "extract_claims":
+        structured_claims = _node_result_value(result, "structured_claims")
+        if structured_claims is None:
+            return None
+        canonical_count = _sequence_count(
+            _field_value(structured_claims, "canonical_claims")
         )
-    if "result" in data or "error" in data:
+        emerging_count = _sequence_count(
+            _field_value(structured_claims, "emerging_claims")
+        )
         return WorkflowProgressEvent(
-            event_type="task_completed",
+            event_type="progress_summary",
             node=node,
-            label=_workflow_label_for_node(node),
+            label=(
+                "Extracting claims... "
+                f"{canonical_count} canonical / {emerging_count} emerging"
+            ),
+        )
+    if node == "extract_structured_draft":
+        structured_draft = _node_result_value(result, "structured_draft")
+        if structured_draft is None:
+            return None
+        tradeoff_count = _sequence_count(
+            _field_value(structured_draft, "conflicts")
+        ) + _sequence_count(_field_value(structured_draft, "gaps"))
+        return WorkflowProgressEvent(
+            event_type="progress_summary",
+            node=node,
+            label=f"Structuring evidence... {tradeoff_count} tradeoffs identified",
+        )
+    if node == "reflect_on_final_answer":
+        passed = _node_result_value(result, "final_answer_reflection_passed")
+        if passed is True:
+            label = "Checking output boundary... passed"
+        else:
+            reflection = _reflection_from_value(
+                _node_result_value(result, "final_answer_reflection")
+            )
+            failed_count = len(_failed_final_answer_rubric_criteria(reflection))
+            label = f"Checking output boundary... {failed_count} criteria flagged"
+        return WorkflowProgressEvent(
+            event_type="progress_summary",
+            node=node,
+            label=label,
+        )
+    if node == "search_images":
+        image_results = _node_result_value(result, "image_results")
+        if image_results is None:
+            return None
+        return WorkflowProgressEvent(
+            event_type="progress_summary",
+            node=node,
+            label=f"Finding visual references... {_sequence_count(image_results)} selected",
         )
     return None
+
+
+def _progress_events_from_task(data: Any) -> list[WorkflowProgressEvent]:
+    if not isinstance(data, dict):
+        return []
+    node = str(data.get("name") or "") or None
+    if data.get("error"):
+        return [
+            WorkflowProgressEvent(
+                event_type="task_failed",
+                node=node,
+                label=WORKFLOW_FAILED_LABEL,
+                error=_short_stream_error(data.get("error")),
+            )
+        ]
+    if "input" in data:
+        return [
+            WorkflowProgressEvent(
+                event_type="task_started",
+                node=node,
+                label=_workflow_label_for_node(node),
+            )
+        ]
+    if "result" in data or "error" in data:
+        events = [
+            WorkflowProgressEvent(
+                event_type="task_completed",
+                node=node,
+                label=_workflow_label_for_node(node),
+            )
+        ]
+        summary = _progress_summary_from_task(node=node, result=data.get("result"))
+        if summary is not None:
+            events.append(summary)
+        return events
+    return []
 
 
 def _progress_event_from_checkpoint(data: Any) -> WorkflowProgressEvent | None:
@@ -890,8 +1013,7 @@ def stream_assistant_response(
                 continue
             mode, data = stream_part
             if mode == "tasks":
-                event = _progress_event_from_task(data)
-                if event is not None:
+                for event in _progress_events_from_task(data):
                     yield event
             elif mode == "checkpoints":
                 event = _progress_event_from_checkpoint(data)

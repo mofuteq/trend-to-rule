@@ -312,6 +312,17 @@ def test_parse_workflow_sse_lines_consumes_progress_events():
         "error": "",
         "response": None,
     }
+    summary_payload = {
+        "event_type": "progress_summary",
+        "node": "retrieve_supporting_context",
+        "label": "Retrieving evidence... 3 sources found",
+        "chat_id": "chat-123",
+        "chat_turn": 1,
+        "thread_id": "chat-123:1",
+        "next_nodes": [],
+        "error": "",
+        "response": None,
+    }
     final_payload = {
         "event_type": "final_response",
         "node": "final_response",
@@ -347,6 +358,9 @@ def test_parse_workflow_sse_lines_consumes_progress_events():
         "event: task_started",
         f"data: {json.dumps(progress_payload)}",
         "",
+        "event: progress_summary",
+        f"data: {json.dumps(summary_payload)}",
+        "",
         "event: final_response",
         f"data: {json.dumps(final_payload)}",
         "",
@@ -356,12 +370,15 @@ def test_parse_workflow_sse_lines_consumes_progress_events():
 
     assert [event.event_type for event in events] == [
         "task_started",
+        "progress_summary",
         "final_response",
     ]
     assert events[0].node == "analyze_request"
     assert events[0].label == "Reading request..."
-    assert events[1].response is not None
-    assert events[1].response.assistant_response.rule == "Assistant rule."
+    assert events[1].node == "retrieve_supporting_context"
+    assert events[1].label == "Retrieving evidence... 3 sources found"
+    assert events[2].response is not None
+    assert events[2].response.assistant_response.rule == "Assistant rule."
 
 
 def test_resume_chat_posts_resume_request(monkeypatch, tmp_path):

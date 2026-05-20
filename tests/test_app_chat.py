@@ -136,6 +136,14 @@ def test_update_workflow_status_from_stream_events():
     app_chat.update_workflow_status_from_event(
         status,
         WorkflowStreamEvent(
+            event_type="progress_summary",
+            node="retrieve_supporting_context",
+            label="Retrieving evidence... 3 sources found",
+        ),
+    )
+    app_chat.update_workflow_status_from_event(
+        status,
+        WorkflowStreamEvent(
             event_type="final_response",
             node="final_response",
             label="Reference frame ready.",
@@ -144,6 +152,7 @@ def test_update_workflow_status_from_stream_events():
 
     assert status.updates == [
         {"label": "Reading request...", "expanded": False},
+        {"label": "Retrieving evidence... 3 sources found", "expanded": False},
         {
             "label": "Reference frame ready.",
             "state": "complete",

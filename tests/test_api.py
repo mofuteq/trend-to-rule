@@ -605,6 +605,13 @@ def test_chat_stream_emits_progress_final_response_and_persists_turn(
             )
         )
         yield ChatTurnStreamUpdate(
+            progress=WorkflowProgressEvent(
+                event_type="progress_summary",
+                node="retrieve_supporting_context",
+                label="Retrieving evidence... 3 sources found",
+            )
+        )
+        yield ChatTurnStreamUpdate(
             result=ChatTurnResult(
                 chat_id=kwargs["chat_id"],
                 user_id=kwargs["user_id"],
@@ -637,10 +644,13 @@ def test_chat_stream_emits_progress_final_response_and_persists_turn(
     assert [payload["event_type"] for payload in payloads] == [
         "task_started",
         "task_completed",
+        "progress_summary",
         "final_response",
     ]
     assert payloads[0]["node"] == "analyze_request"
     assert payloads[0]["label"] == "Reading request..."
+    assert payloads[2]["node"] == "retrieve_supporting_context"
+    assert payloads[2]["label"] == "Retrieving evidence... 3 sources found"
     final_payload = payloads[-1]
     assert final_payload["label"] == "Reference frame ready."
     assert final_payload["response"]["chat_id"] == "chat-stream"
