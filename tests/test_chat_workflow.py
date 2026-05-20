@@ -373,7 +373,7 @@ def test_stream_assistant_response_normalizes_tasks_without_raw_payloads(
     ] == [
         "Retrieving evidence... 3 sources found",
         "Extracting claims... 2 canonical / 1 emerging",
-        "Structuring evidence... 3 tradeoffs identified",
+        "Structuring evidence... 3 gaps/conflicts identified",
         "Checking output boundary... passed",
         "Finding visual references... 2 selected",
     ]

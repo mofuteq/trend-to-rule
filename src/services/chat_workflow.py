@@ -853,7 +853,10 @@ def _progress_summary_from_task(
         return WorkflowProgressEvent(
             event_type="progress_summary",
             node=node,
-            label=f"Structuring evidence... {tradeoff_count} tradeoffs identified",
+            label=(
+                "Structuring evidence... "
+                f"{tradeoff_count} gaps/conflicts identified"
+            ),
         )
     if node == "reflect_on_final_answer":
         passed = _node_result_value(result, "final_answer_reflection_passed")
