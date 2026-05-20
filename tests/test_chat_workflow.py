@@ -151,6 +151,253 @@ def test_generate_assistant_response_resume_invokes_checkpoint_without_new_input
     assert captured["invoke_config"]["configurable"]["thread_id"] == "chat-123:2"
 
 
+def test_stream_assistant_response_normalizes_tasks_without_raw_payloads(
+    monkeypatch,
+    tmp_path,
+):
+    config = _make_config(tmp_path)
+    captured = {}
+    raw_prompt = "SECRET_RAW_PROMPT"
+    raw_article = "SECRET_RETRIEVED_ARTICLE_CONTENT"
+    raw_output = "SECRET_FULL_TASK_OUTPUT"
+    raw_claim = "SECRET_CLAIM_TEXT"
+    raw_draft = "SECRET_STRUCTURED_DRAFT_TEXT"
+    raw_reasoning = "SECRET_REFLECTION_RATIONALE"
+    raw_image_url = "https://example.test/SECRET_IMAGE_URL.jpg"
+
+    class FakeGraph:
+        def stream(self, graph_input, invoke_config, *, stream_mode, version):
+            captured["graph_input"] = graph_input
+            captured["invoke_config"] = invoke_config
+            captured["stream_mode"] = stream_mode
+            captured["version"] = version
+            yield {
+                "type": "tasks",
+                "data": {
+                    "name": "analyze_request",
+                    "input": {
+                        "user_prompt": raw_prompt,
+                        "graph_state": {"article": raw_article},
+                    },
+                    "triggers": ("branch:to:analyze_request",),
+                },
+            }
+            yield {
+                "type": "tasks",
+                "data": {
+                    "name": "retrieve_supporting_context",
+                    "error": None,
+                    "result": {
+                        "retrieval": workflow.RetrievalBundle(
+                            canonical_context=raw_article,
+                            emerging_context=raw_article,
+                            canonical_sources=[
+                                WebSource(
+                                    source_id="C01",
+                                    query_kind="canonical",
+                                    title="Canonical",
+                                    url="https://example.test/canonical-1",
+                                    snippet=raw_article,
+                                ),
+                                WebSource(
+                                    source_id="C02",
+                                    query_kind="canonical",
+                                    title="Canonical 2",
+                                    url="https://example.test/canonical-2",
+                                    snippet=raw_article,
+                                ),
+                            ],
+                            emerging_sources=[
+                                WebSource(
+                                    source_id="E01",
+                                    query_kind="emerging",
+                                    title="Emerging",
+                                    url="https://example.test/emerging-1",
+                                    snippet=raw_article,
+                                ),
+                            ],
+                        ),
+                        "full_output": raw_output,
+                    },
+                    "interrupts": [],
+                },
+            }
+            yield {
+                "type": "tasks",
+                "data": {
+                    "name": "extract_claims",
+                    "error": None,
+                    "result": {
+                        "structured_claims": StructuredClaims(
+                            canonical_claims=[
+                                {
+                                    "claim": raw_claim,
+                                    "claim_type": "observation",
+                                    "source_id": "C01",
+                                },
+                                {
+                                    "claim": raw_claim,
+                                    "claim_type": "interpretation",
+                                    "source_id": "C02",
+                                },
+                            ],
+                            emerging_claims=[
+                                {
+                                    "claim": raw_claim,
+                                    "claim_type": "signal",
+                                    "source_id": "E01",
+                                }
+                            ],
+                        )
+                    },
+                    "interrupts": [],
+                },
+            }
+            yield {
+                "type": "tasks",
+                "data": {
+                    "name": "extract_structured_draft",
+                    "error": None,
+                    "result": {
+                        "structured_draft": StructuredDraft(
+                            theme=raw_draft,
+                            canonical=[raw_draft],
+                            emerging=[raw_draft],
+                            conflicts=[raw_draft],
+                            gaps=[raw_draft, raw_draft],
+                            common_rule=[raw_draft],
+                        )
+                    },
+                    "interrupts": [],
+                },
+            }
+            yield {
+                "type": "tasks",
+                "data": {
+                    "name": "reflect_on_final_answer",
+                    "error": None,
+                    "result": {
+                        "final_answer_reflection": FinalAnswerRubric(
+                            lends_reference_frame=True,
+                            avoids_prescription=True,
+                            avoids_user_judgment=True,
+                            includes_interpreted_rules=True,
+                            rules_are_observation_grounded=True,
+                            hides_intermediate_structure=True,
+                            flows_as_continuous_prose=True,
+                            avoids_listicle_style=True,
+                            preserves_logical_completeness=True,
+                            rationale=raw_reasoning,
+                            revision_instruction=raw_reasoning,
+                        ),
+                        "final_answer_reflection_passed": True,
+                    },
+                    "interrupts": [],
+                },
+            }
+            yield {
+                "type": "tasks",
+                "data": {
+                    "name": "search_images",
+                    "error": None,
+                    "result": {
+                        "image_results": [
+                            {"image_url": raw_image_url},
+                            {"image_url": raw_image_url},
+                        ]
+                    },
+                    "interrupts": [],
+                },
+            }
+            yield {
+                "type": "checkpoints",
+                "data": {
+                    "values": {
+                        "user_prompt": raw_prompt,
+                        "retrieval": raw_article,
+                    },
+                    "next": ["extract_claims"],
+                    "tasks": [
+                        {
+                            "name": "extract_claims",
+                            "state": {"prompt": raw_prompt},
+                        }
+                    ],
+                },
+            }
+            yield {
+                "type": "values",
+                "data": {
+                    "request_analysis": _request_analysis(in_scope=True),
+                    "retrieval": workflow.RetrievalBundle(
+                        canonical_context=raw_article,
+                        emerging_context="",
+                    ),
+                    "rule": "Safe streamed rule.",
+                },
+            }
+
+    monkeypatch.setattr(workflow, "_get_compiled_graph", lambda config: FakeGraph())
+
+    items = list(
+        workflow.stream_assistant_response(
+            user_prompt=raw_prompt,
+            config=config,
+            last_request_goal=None,
+            history=[],
+            thread_id="chat-stream:1",
+        )
+    )
+
+    progress_events = [
+        item for item in items if isinstance(item, workflow.WorkflowProgressEvent)
+    ]
+    assert [event.event_type for event in progress_events] == [
+        "task_started",
+        "task_completed",
+        "progress_summary",
+        "task_completed",
+        "progress_summary",
+        "task_completed",
+        "progress_summary",
+        "task_completed",
+        "progress_summary",
+        "task_completed",
+        "progress_summary",
+        "checkpoint",
+    ]
+    assert [
+        event.label
+        for event in progress_events
+        if event.event_type == "progress_summary"
+    ] == [
+        "Retrieving evidence... 3 sources found",
+        "Extracting claims... 2 canonical / 1 emerging",
+        "Structuring evidence... 3 gaps/conflicts identified",
+        "Checking output boundary... passed",
+        "Finding visual references... 2 selected",
+    ]
+    assert progress_events[-1].next_nodes == ["extract_claims"]
+    progress_json = "\n".join(event.model_dump_json() for event in progress_events)
+    assert raw_prompt not in progress_json
+    assert raw_article not in progress_json
+    assert raw_output not in progress_json
+    assert raw_claim not in progress_json
+    assert raw_draft not in progress_json
+    assert raw_reasoning not in progress_json
+    assert raw_image_url not in progress_json
+    assert "graph_state" not in progress_json
+    assert "common_rule" not in progress_json
+    assert "canonical_claims" not in progress_json
+    assert "values" not in progress_json
+    assert "tasks" not in progress_json
+    assert captured["stream_mode"] == ["tasks", "checkpoints", "values"]
+    assert captured["version"] == "v2"
+    assert captured["graph_input"].user_prompt == raw_prompt
+    assert captured["invoke_config"]["configurable"]["thread_id"] == "chat-stream:1"
+    assert items[-1].rule == "Safe streamed rule."
+
+
 def test_generate_assistant_response_resumes_real_sqlite_checkpoint(
     monkeypatch,
     tmp_path,

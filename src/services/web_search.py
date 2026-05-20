@@ -199,7 +199,6 @@ def build_web_sources_html_table(rows: list[dict[str, str]]) -> str:
         source_id = escape(row.get("source_id", ""))
         title = escape(row.get("title", ""))
         published_at = escape(row.get("published_at", ""))
-        provider = escape(row.get("provider", ""))
         url = row.get("url", "").strip()
         title_cell = (
             f'<a href="{escape(url, quote=True)}" target="_blank">{title}</a>'
@@ -211,7 +210,6 @@ def build_web_sources_html_table(rows: list[dict[str, str]]) -> str:
             f"<td>{source_id}</td>"
             f"<td>{title_cell}</td>"
             f"<td>{published_at}</td>"
-            f"<td>{provider}</td>"
             "</tr>"
         )
 
@@ -219,7 +217,7 @@ def build_web_sources_html_table(rows: list[dict[str, str]]) -> str:
     return (
         "<table>"
         "<thead><tr><th>source_id</th><th>title</th><th>published_at</th>"
-        "<th>provider</th></tr></thead>"
+        "</tr></thead>"
         f"<tbody>{body_html}</tbody>"
         "</table>"
     )

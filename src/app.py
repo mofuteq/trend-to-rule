@@ -147,7 +147,7 @@ def main() -> None:
             st.rerun()
 
     st.sidebar.divider()
-    st.sidebar.caption("Evidence retrieval: Tavily web search")
+    st.sidebar.caption("Evidence retrieval: web search")
     st.sidebar.caption(
         "Patterns, not persuasion. This agent organizes signals without steering "
         "your decision."

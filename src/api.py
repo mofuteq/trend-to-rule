@@ -7,6 +7,7 @@ import sys
 import uuid
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic_ai.messages import ModelMessage
 
 SRC_ROOT = Path(__file__).resolve().parent
@@ -25,9 +26,15 @@ from services.api_models import (  # noqa: E402
     ListChatsResponse,
     PersistedTurnArtifacts,
     ResumeChatRequest,
+    WorkflowStreamEvent,
 )
 from services.chat import generate_chat_title  # noqa: E402
-from services.chat_runtime import ChatTurnResult, run_chat_turn  # noqa: E402
+from services.chat_runtime import (  # noqa: E402
+    ChatTurnResult,
+    run_chat_turn,
+    stream_chat_turn,
+)
+from services.chat_workflow import WORKFLOW_FAILED_LABEL  # noqa: E402
 from services.chat_session import (  # noqa: E402
     LoadedChatSession,
     append_chat_turn,
@@ -336,6 +343,139 @@ def chat(request: ChatRequest) -> ChatResponse:
         raise
     finally:
         tracing.flush()
+
+
+@app.post("/chat/stream")
+def chat_stream(request: ChatRequest) -> StreamingResponse:
+    """Run one chat turn and stream compact LangGraph workflow events."""
+    return StreamingResponse(
+        _stream_chat_sse(request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def _stream_chat_sse(request: ChatRequest):
+    workspace_id = request.workspace_id or CONFIG.default_workspace_key
+    chat_db: ChatDB | None = None
+    session: LoadedChatSession | None = None
+    chat_turn: int | None = None
+    thread_id: str | None = None
+    try:
+        chat_db = get_api_chat_db()
+        session = load_chat_session(
+            chat_id=request.chat_id,
+            chat_db=chat_db,
+            chat_db_name=CONFIG.chat_db_name,
+            chat_meta_db_name=CONFIG.chat_meta_db_name,
+        )
+        chat_turn = session.next_chat_turn
+        thread_id = _workflow_thread_id(request.chat_id, chat_turn)
+        ensure_user_chat_id(
+            user_id=workspace_id,
+            chat_id=request.chat_id,
+            chat_db=chat_db,
+            user_db_name=CONFIG.user_db_name,
+        )
+        _mark_workflow_running(
+            chat_id=request.chat_id,
+            chat_turn=chat_turn,
+            thread_id=thread_id,
+            user_prompt=request.message,
+            workspace_id=workspace_id,
+            chat_db=chat_db,
+        )
+
+        result: ChatTurnResult | None = None
+        for update in stream_chat_turn(
+            user_prompt=request.message,
+            chat_id=request.chat_id,
+            user_id=workspace_id,
+            config=CONFIG,
+            chat_turn=chat_turn,
+            last_request_goal=session.last_request_goal or None,
+            history=session.history,
+            thread_id=thread_id,
+        ):
+            if update.progress is not None:
+                yield _sse_encode(
+                    WorkflowStreamEvent(
+                        event_type=update.progress.event_type,
+                        node=update.progress.node,
+                        label=update.progress.label,
+                        chat_id=request.chat_id,
+                        chat_turn=chat_turn,
+                        thread_id=thread_id,
+                        next_nodes=update.progress.next_nodes,
+                        error=update.progress.error,
+                    )
+                )
+            if update.result is not None:
+                result = update.result
+
+        if result is None:
+            raise RuntimeError("Workflow stream completed without a result.")
+        response = _persist_completed_chat_response(
+            chat_id=request.chat_id,
+            workspace_id=workspace_id,
+            chat_turn=chat_turn,
+            session=session,
+            result=result,
+            chat_db=chat_db,
+        )
+        _mark_workflow_completed(
+            chat_id=request.chat_id,
+            chat_turn=chat_turn,
+            thread_id=thread_id,
+            chat_db=chat_db,
+        )
+        yield _sse_encode(
+            WorkflowStreamEvent(
+                event_type="final_response",
+                node="final_response",
+                label="Reference frame ready.",
+                chat_id=request.chat_id,
+                chat_turn=chat_turn,
+                thread_id=thread_id,
+                response=response,
+            )
+        )
+    except Exception as err:
+        if chat_db is not None and chat_turn is not None and thread_id:
+            try:
+                _mark_workflow_failed(
+                    chat_id=request.chat_id,
+                    chat_turn=chat_turn,
+                    thread_id=thread_id,
+                    chat_db=chat_db,
+                    err=err,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to persist workflow failure metadata for %s",
+                    request.chat_id,
+                    exc_info=True,
+                )
+        yield _sse_encode(
+            WorkflowStreamEvent(
+                event_type="error",
+                node=None,
+                label=WORKFLOW_FAILED_LABEL,
+                chat_id=request.chat_id,
+                chat_turn=chat_turn,
+                thread_id=thread_id,
+                error=_short_error_string(err),
+            )
+        )
+    finally:
+        tracing.flush()
+
+
+def _sse_encode(event: WorkflowStreamEvent) -> str:
+    return f"event: {event.event_type}\ndata: {event.model_dump_json()}\n\n"
 
 
 @app.post("/chats/{chat_id}/resume", response_model=ChatResponse)

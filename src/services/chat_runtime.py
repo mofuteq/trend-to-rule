@@ -1,12 +1,19 @@
 """Shared chat-turn runtime used by UI and API boundaries."""
 
+from collections.abc import Iterator
+
 from pydantic import BaseModel
 from pydantic_ai.messages import ModelMessage
 
 from core.app_config import AppConfig
 from core.text_utils import normalize_text_nfkc
 from services import tracing
-from services.chat_workflow import AssistantResponseBundle, generate_assistant_response
+from services.chat_workflow import (
+    AssistantResponseBundle,
+    WorkflowProgressEvent,
+    generate_assistant_response,
+    stream_assistant_response,
+)
 from services.llm_client import (
     DEFAULT_OPENROUTER_MODEL,
     DEFAULT_OPENROUTER_OUTPUT_RETRIES,
@@ -27,6 +34,13 @@ class ChatTurnResult(BaseModel):
     chat_turn: int
     normalized_prompt: str
     assistant_response: AssistantResponseBundle
+
+
+class ChatTurnStreamUpdate(BaseModel):
+    """One streamed chat-turn update from the shared runtime."""
+
+    progress: WorkflowProgressEvent | None = None
+    result: ChatTurnResult | None = None
 
 
 def run_chat_turn(
@@ -86,6 +100,72 @@ def run_chat_turn(
         chat_turn=chat_turn,
         normalized_prompt=normalized_prompt,
         assistant_response=assistant_response,
+    )
+
+
+def stream_chat_turn(
+    user_prompt: str,
+    *,
+    chat_id: str,
+    user_id: str,
+    config: AppConfig,
+    chat_turn: int = 1,
+    last_request_goal: str | None = None,
+    history: list[ModelMessage] | None = None,
+    thread_id: str | None = None,
+    resume_from_checkpoint: bool = False,
+) -> Iterator[ChatTurnStreamUpdate]:
+    """Run one chat turn while yielding display-safe LangGraph progress."""
+    normalized_prompt = normalize_text_nfkc(user_prompt)
+    resolved_thread_id = thread_id or f"{chat_id}:{chat_turn}"
+    tracing.update_current_trace(
+        name=f"chat_turn_{chat_turn}",
+        user_id=user_id,
+        session_id=chat_id,
+        input=normalized_prompt,
+        tags=[
+            *tracing.get_repoa_trace_tags(),
+            "chat_turn",
+            f"workflow:{WORKFLOW_VERSION}",
+        ],
+        metadata={
+            **tracing.get_repoa_trace_metadata(),
+            "chat_id": chat_id,
+            "chat_turn": chat_turn,
+            "workflow_version": WORKFLOW_VERSION,
+        },
+    )
+
+    assistant_response: AssistantResponseBundle | None = None
+    for item in stream_assistant_response(
+        user_prompt=normalized_prompt,
+        config=config,
+        last_request_goal=last_request_goal,
+        history=history,
+        thread_id=resolved_thread_id,
+        resume_from_checkpoint=resume_from_checkpoint,
+        langfuse_session_id=chat_id,
+        langfuse_user_id=user_id,
+    ):
+        if isinstance(item, WorkflowProgressEvent):
+            yield ChatTurnStreamUpdate(progress=item)
+        else:
+            assistant_response = item
+
+    if assistant_response is None:
+        raise RuntimeError("Workflow stream completed without assistant response.")
+    _update_chat_turn_trace_output(
+        assistant_response=assistant_response,
+        chat_turn=chat_turn,
+    )
+    yield ChatTurnStreamUpdate(
+        result=ChatTurnResult(
+            chat_id=chat_id,
+            user_id=user_id,
+            chat_turn=chat_turn,
+            normalized_prompt=normalized_prompt,
+            assistant_response=assistant_response,
+        )
     )
 
 

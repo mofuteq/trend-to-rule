@@ -189,6 +189,12 @@ including whether the run is `running`, `completed`, or `failed`. LangGraph
 persists node-level checkpoints to SQLite, so an unfinished workflow can resume
 from the saved checkpoint by reusing the same `thread_id`.
 
+The Streamlit status display is driven by compact LangGraph task/checkpoint
+events and display-safe progress summaries exposed through FastAPI SSE.
+LangGraph remains the source of truth for workflow progress; FastAPI normalizes
+display-safe events, and Streamlit renders them in the existing status
+component.
+
 If the browser is closed or the Streamlit UI is reopened while a workflow is
 unfinished, the UI can discover the unfinished run through the chat API and
 automatically resume it. The resume path is execution control, not trace

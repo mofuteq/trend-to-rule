@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 from fastapi.testclient import TestClient
 from pydantic_ai.messages import ModelRequest, ModelResponse
@@ -7,9 +8,13 @@ import api
 from core.app_config import AppConfig
 from core.models import RequestAnalysis, SearchQuery, WebSource
 from services.api_models import PersistedTurnArtifacts
-from services.chat_runtime import ChatTurnResult
+from services.chat_runtime import ChatTurnResult, ChatTurnStreamUpdate
 from services.chat_session import open_chat_db
-from services.chat_workflow import AssistantResponseBundle, RetrievalBundle
+from services.chat_workflow import (
+    AssistantResponseBundle,
+    RetrievalBundle,
+    WorkflowProgressEvent,
+)
 from services.image_search import ImageSearchResult
 
 
@@ -125,6 +130,19 @@ def _install_test_api_config(monkeypatch, tmp_path: Path) -> AppConfig:
     monkeypatch.setattr(api, "_CHAT_DB", None)
     monkeypatch.setattr(api, "generate_chat_title", lambda messages: "Denim title")
     return config
+
+
+def _sse_payloads(response):
+    payloads = []
+    for block in response.text.strip().split("\n\n"):
+        data_lines = [
+            line.removeprefix("data: ")
+            for line in block.splitlines()
+            if line.startswith("data:")
+        ]
+        if data_lines:
+            payloads.append(json.loads("\n".join(data_lines)))
+    return payloads
 
 
 def test_health_endpoint_returns_ok():
@@ -561,6 +579,148 @@ def test_chat_endpoint_stores_workflow_metadata_running_then_completed(
     assert isinstance(meta["latest_workflow_started_at_ts"], float)
     assert isinstance(meta["latest_workflow_completed_at_ts"], float)
     assert meta["chat_turn"] == 1
+
+
+def test_chat_stream_emits_progress_final_response_and_persists_turn(
+    monkeypatch,
+    tmp_path,
+):
+    config = _install_test_api_config(monkeypatch, tmp_path)
+    calls = []
+
+    def fake_stream_chat_turn(**kwargs):
+        calls.append(kwargs)
+        yield ChatTurnStreamUpdate(
+            progress=WorkflowProgressEvent(
+                event_type="task_started",
+                node="analyze_request",
+                label="Reading request...",
+            )
+        )
+        yield ChatTurnStreamUpdate(
+            progress=WorkflowProgressEvent(
+                event_type="task_completed",
+                node="analyze_request",
+                label="Reading request...",
+            )
+        )
+        yield ChatTurnStreamUpdate(
+            progress=WorkflowProgressEvent(
+                event_type="progress_summary",
+                node="retrieve_supporting_context",
+                label="Retrieving evidence... 3 sources found",
+            )
+        )
+        yield ChatTurnStreamUpdate(
+            result=ChatTurnResult(
+                chat_id=kwargs["chat_id"],
+                user_id=kwargs["user_id"],
+                chat_turn=kwargs["chat_turn"],
+                normalized_prompt=kwargs["user_prompt"],
+                assistant_response=_assistant_response(
+                    request_goal="streamed goal",
+                    image_results=[_image_result("streamed")],
+                    retrieval=_retrieval_bundle("streamed"),
+                    image_query="streamed image query",
+                ),
+            )
+        )
+
+    monkeypatch.setattr(api, "stream_chat_turn", fake_stream_chat_turn)
+    client = TestClient(api.app)
+
+    response = client.post(
+        "/chat/stream",
+        json={
+            "chat_id": "chat-stream",
+            "workspace_id": "workspace-a",
+            "message": "Stream this turn",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    payloads = _sse_payloads(response)
+    assert [payload["event_type"] for payload in payloads] == [
+        "task_started",
+        "task_completed",
+        "progress_summary",
+        "final_response",
+    ]
+    assert payloads[0]["node"] == "analyze_request"
+    assert payloads[0]["label"] == "Reading request..."
+    assert payloads[2]["node"] == "retrieve_supporting_context"
+    assert payloads[2]["label"] == "Retrieving evidence... 3 sources found"
+    final_payload = payloads[-1]
+    assert final_payload["label"] == "Reference frame ready."
+    assert final_payload["response"]["chat_id"] == "chat-stream"
+    assert final_payload["response"]["chat_turn"] == 1
+    assert final_payload["response"]["message"] == "Stream this turn"
+    assert final_payload["response"]["assistant_response"]["rule"] == (
+        "Assistant rule for streamed goal."
+    )
+    assert calls[0]["thread_id"] == "chat-stream:1"
+    assert calls[0]["chat_turn"] == 1
+
+    chat_db = open_chat_db(config)
+    assert chat_db.get("chat-stream", config.chat_db_name) == [
+        {"role": "user", "content": "Stream this turn"},
+        {"role": "assistant", "content": "Assistant rule for streamed goal."},
+    ]
+    meta = chat_db.get("chat-stream", config.chat_meta_db_name)
+    assert meta["latest_thread_id"] == "chat-stream:1"
+    assert meta["latest_workflow_status"] == "completed"
+    assert meta["turn_artifacts"]["1"]["chat_turn"] == 1
+    assert meta["turn_artifacts"]["1"]["image_query"] == "streamed image query"
+    assert meta["turn_artifacts"]["1"]["retrieval"]["canonical_context"] == ""
+
+
+def test_chat_stream_error_event_records_failed_workflow_metadata(
+    monkeypatch,
+    tmp_path,
+):
+    config = _install_test_api_config(monkeypatch, tmp_path)
+
+    def fake_stream_chat_turn(**kwargs):
+        yield ChatTurnStreamUpdate(
+            progress=WorkflowProgressEvent(
+                event_type="task_started",
+                node="retrieve_supporting_context",
+                label="Retrieving evidence...",
+            )
+        )
+        raise RuntimeError("streamed workflow exploded")
+
+    monkeypatch.setattr(api, "stream_chat_turn", fake_stream_chat_turn)
+    client = TestClient(api.app)
+
+    response = client.post(
+        "/chat/stream",
+        json={
+            "chat_id": "chat-stream-fail",
+            "workspace_id": "workspace-a",
+            "message": "This stream will fail",
+        },
+    )
+
+    assert response.status_code == 200
+    payloads = _sse_payloads(response)
+    assert [payload["event_type"] for payload in payloads] == [
+        "task_started",
+        "error",
+    ]
+    assert payloads[-1]["label"] == "Workflow failed."
+    assert payloads[-1]["error"] == "streamed workflow exploded"
+
+    chat_db = open_chat_db(config)
+    assert chat_db.get("chat-stream-fail", config.chat_db_name) is None
+    meta = chat_db.get("chat-stream-fail", config.chat_meta_db_name)
+    assert meta["latest_thread_id"] == "chat-stream-fail:1"
+    assert meta["latest_chat_turn"] == 1
+    assert meta["latest_workflow_status"] == "failed"
+    assert meta["latest_workflow_error"] == "streamed workflow exploded"
+    assert meta["latest_workflow_completed_at_ts"] is None
+    assert meta["latest_workflow_message"] == "This stream will fail"
 
 
 def test_chat_endpoint_stores_failed_workflow_metadata(monkeypatch, tmp_path):
